@@ -1,0 +1,15 @@
+[package]
+name = "bbx-collect"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bbx-core.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+log.workspace = true
+roxmltree.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+windows-sys.workspace = true

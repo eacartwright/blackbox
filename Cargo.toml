@@ -1,0 +1,50 @@
+[workspace]
+resolver = "2"
+members = ["crates/bbx-core", "crates/bbx-collect", "crates/bbx"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace.dependencies]
+bbx-core = { path = "crates/bbx-core" }
+bbx-collect = { path = "crates/bbx-collect" }
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"] }
+crc32c = "0.6"
+log = { version = "0.4", features = ["std"] }
+regex = "1"
+roxmltree = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+windows-service = "0.8"
+zstd = "0.13"
+
+[workspace.dependencies.windows-sys]
+version = "0.59"
+features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Console",
+  "Win32_System_Diagnostics_Etw",
+  "Win32_System_EventLog",
+  "Win32_System_Performance",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_System_Time",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Devices_DeviceAndDriverInstallation",
+]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"   # collectors are isolated with catch_unwind; keep unwinding
+debug = "line-tables-only"
