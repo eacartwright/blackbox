@@ -37,45 +37,45 @@ const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> Guid {
 }
 
 #[repr(C)]
-struct WnodeHeader {
-    buffer_size: u32,
-    provider_id: u32,
-    historical_context: u64,
-    timestamp: i64,
-    guid: Guid,
-    client_context: u32,
-    flags: u32,
+pub(crate) struct WnodeHeader {
+    pub(crate) buffer_size: u32,
+    pub(crate) provider_id: u32,
+    pub(crate) historical_context: u64,
+    pub(crate) timestamp: i64,
+    pub(crate) guid: Guid,
+    pub(crate) client_context: u32,
+    pub(crate) flags: u32,
 }
 
 #[repr(C)]
-struct EventTraceProperties {
-    wnode: WnodeHeader,
-    buffer_size: u32,
-    minimum_buffers: u32,
-    maximum_buffers: u32,
-    maximum_file_size: u32,
-    log_file_mode: u32,
-    flush_timer: u32,
-    enable_flags: u32,
-    age_limit: i32,
-    number_of_buffers: u32,
-    free_buffers: u32,
-    events_lost: u32,
-    buffers_written: u32,
-    log_buffers_lost: u32,
-    real_time_buffers_lost: u32,
-    logger_thread_id: *mut c_void,
-    log_file_name_offset: u32,
-    logger_name_offset: u32,
+pub(crate) struct EventTraceProperties {
+    pub(crate) wnode: WnodeHeader,
+    pub(crate) buffer_size: u32,
+    pub(crate) minimum_buffers: u32,
+    pub(crate) maximum_buffers: u32,
+    pub(crate) maximum_file_size: u32,
+    pub(crate) log_file_mode: u32,
+    pub(crate) flush_timer: u32,
+    pub(crate) enable_flags: u32,
+    pub(crate) age_limit: i32,
+    pub(crate) number_of_buffers: u32,
+    pub(crate) free_buffers: u32,
+    pub(crate) events_lost: u32,
+    pub(crate) buffers_written: u32,
+    pub(crate) log_buffers_lost: u32,
+    pub(crate) real_time_buffers_lost: u32,
+    pub(crate) logger_thread_id: *mut c_void,
+    pub(crate) log_file_name_offset: u32,
+    pub(crate) logger_name_offset: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<EventTraceProperties>() == 120);
 
 #[link(name = "advapi32", kind = "raw-dylib")]
 extern "system" {
-    fn StartTraceW(handle: *mut u64, name: *const u16, props: *mut EventTraceProperties) -> u32;
-    fn ControlTraceW(handle: u64, name: *const u16, props: *mut EventTraceProperties, code: u32) -> u32;
-    fn EnableTraceEx2(
+    pub(crate) fn StartTraceW(handle: *mut u64, name: *const u16, props: *mut EventTraceProperties) -> u32;
+    pub(crate) fn ControlTraceW(handle: u64, name: *const u16, props: *mut EventTraceProperties, code: u32) -> u32;
+    pub(crate) fn EnableTraceEx2(
         handle: u64,
         provider: *const Guid,
         control: u32,
@@ -87,37 +87,37 @@ extern "system" {
     ) -> u32;
 }
 
-const WNODE_FLAG_TRACED_GUID: u32 = 0x0002_0000;
+pub(crate) const WNODE_FLAG_TRACED_GUID: u32 = 0x0002_0000;
 const EVENT_TRACE_FILE_MODE_SEQUENTIAL: u32 = 0x0000_0001;
 #[cfg(test)]
 const EVENT_TRACE_FILE_MODE_NEWFILE: u32 = 0x0000_0008;
-const EVENT_TRACE_SYSTEM_LOGGER_MODE: u32 = 0x0200_0000;
-const CONTROL_QUERY: u32 = 0;
-const CONTROL_STOP: u32 = 1;
+pub(crate) const EVENT_TRACE_SYSTEM_LOGGER_MODE: u32 = 0x0200_0000;
+pub(crate) const CONTROL_QUERY: u32 = 0;
+pub(crate) const CONTROL_STOP: u32 = 1;
 const CONTROL_UPDATE: u32 = 2;
-const CONTROL_FLUSH: u32 = 3;
-const ENABLE_PROVIDER: u32 = 1;
-const ERROR_ALREADY_EXISTS: u32 = 183;
-const ERROR_ACCESS_DENIED: u32 = 5;
-const ERROR_WMI_INSTANCE_NOT_FOUND: u32 = 4201;
+pub(crate) const CONTROL_FLUSH: u32 = 3;
+pub(crate) const ENABLE_PROVIDER: u32 = 1;
+pub(crate) const ERROR_ALREADY_EXISTS: u32 = 183;
+pub(crate) const ERROR_ACCESS_DENIED: u32 = 5;
+pub(crate) const ERROR_WMI_INSTANCE_NOT_FOUND: u32 = 4201;
 
 // Kernel (SystemTraceProvider) flags.
-const F_PROCESS: u32 = 0x0000_0001;
-const F_THREAD: u32 = 0x0000_0002;
-const F_IMAGE_LOAD: u32 = 0x0000_0004;
+pub(crate) const F_PROCESS: u32 = 0x0000_0001;
+pub(crate) const F_THREAD: u32 = 0x0000_0002;
+pub(crate) const F_IMAGE_LOAD: u32 = 0x0000_0004;
 const F_PROCESS_COUNTERS: u32 = 0x0000_0008;
 const F_CSWITCH: u32 = 0x0000_0010;
 const F_DPC: u32 = 0x0000_0020;
 const F_INTERRUPT: u32 = 0x0000_0040;
-const F_DISK_IO: u32 = 0x0000_0100;
-const F_DISK_FILE_IO: u32 = 0x0000_0200;
+pub(crate) const F_DISK_IO: u32 = 0x0000_0100;
+pub(crate) const F_DISK_FILE_IO: u32 = 0x0000_0200;
 const F_DISPATCHER: u32 = 0x0000_0800;
 const F_MEMORY_HARD_FAULTS: u32 = 0x0000_2000;
-const F_NETWORK_TCPIP: u32 = 0x0001_0000;
-const F_REGISTRY: u32 = 0x0002_0000;
+pub(crate) const F_NETWORK_TCPIP: u32 = 0x0001_0000;
+pub(crate) const F_REGISTRY: u32 = 0x0002_0000;
 const F_PROFILE: u32 = 0x0100_0000;
 const F_FILE_IO: u32 = 0x0200_0000;
-const F_FILE_IO_INIT: u32 = 0x0400_0000;
+pub(crate) const F_FILE_IO_INIT: u32 = 0x0400_0000;
 
 pub fn kernel_flags(deep: bool) -> u32 {
     let standard = F_PROCESS
@@ -153,10 +153,10 @@ const SESSION_GUID: Guid = guid(0xB1AC_B0C5, 0x5E55, 0x4B1D, [0x9A, 0x7E, 0x0B, 
 const NAME_CHARS: usize = 1024;
 
 /// EVENT_TRACE_PROPERTIES followed by room for the session and file names.
-struct PropsBuf(Vec<u64>);
+pub(crate) struct PropsBuf(pub(crate) Vec<u64>);
 
 impl PropsBuf {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let bytes = 120 + 2 * NAME_CHARS * 2;
         let mut v = PropsBuf(vec![0u64; bytes.div_ceil(8)]);
         let p = v.props();
@@ -166,7 +166,7 @@ impl PropsBuf {
         p.log_file_name_offset = (120 + NAME_CHARS * 2) as u32;
         v
     }
-    fn props(&mut self) -> &mut EventTraceProperties {
+    pub(crate) fn props(&mut self) -> &mut EventTraceProperties {
         unsafe { &mut *(self.0.as_mut_ptr() as *mut EventTraceProperties) }
     }
     fn set_file(&mut self, path: &Path) {

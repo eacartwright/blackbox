@@ -3,18 +3,17 @@
 //! performs maintenance. Used by both the Windows service and `bbx run`.
 
 use anyhow::Result;
-use bbx_collect::{blackbox, bootinfo, devices, eventlog, evidence, pdh, process, system, util, Ctx, Stop};
+use bbx_collect::{blackbox, bootinfo, detect, devices, etwlive, eventlog, evidence, pdh, process, system, util, Ctx, Stop};
 use bbx_core::classifier::{self, ClassifierInput, HeartbeatPoint};
 use bbx_core::config::Config;
 use bbx_core::journal::{self, JournalOptions, JournalWriter};
 use bbx_core::paths::Paths;
 use bbx_core::records::{self as rec, Heartbeat, RecordType};
-use bbx_core::redact::Redactor;
 use bbx_core::runstate::{write_atomic, RunState};
 use bbx_core::time::{fmt_local, now_ft, FT_PER_SEC};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -81,17 +80,10 @@ pub fn run(stop: Arc<Stop>, system_shutdown: Arc<AtomicBool>, opts: RunOptions) 
     };
     state.save(&paths.run_state())?;
 
-    let ctx = Arc::new(Ctx {
-        journal: journal.clone(),
-        redactor: Redactor::new(&cfg.redact_patterns),
-        cfg,
-        paths: paths.clone(),
-        vitals: Mutex::new(Default::default()),
-        stop: stop.clone(),
-        boot_id: boot.boot_id,
-    });
+    let ctx = Arc::new(Ctx::new(journal.clone(), cfg, paths.clone(), stop.clone(), boot.boot_id));
 
     let mut threads: Vec<JoinHandle<()>> = vec![
+        crate::incidents::spawn(ctx.clone()),
         spawn_heartbeat(ctx.clone()),
         spawn_supervised(ctx.clone(), "system", system::run),
         spawn_supervised(ctx.clone(), "process", process::run),
@@ -99,6 +91,7 @@ pub fn run(stop: Arc<Stop>, system_shutdown: Arc<AtomicBool>, opts: RunOptions) 
         spawn_supervised(ctx.clone(), "devices", devices::run),
         spawn_supervised(ctx.clone(), "eventlog", eventlog::run),
         spawn_supervised(ctx.clone(), "blackbox", blackbox::run),
+        spawn_supervised(ctx.clone(), "etwlive", etwlive::run),
         spawn_supervised(ctx.clone(), "maintenance", maintenance),
     ];
     {
@@ -187,6 +180,7 @@ fn spawn_heartbeat(ctx: Arc<Ctx>) -> JoinHandle<()> {
             let interval = Duration::from_millis(ctx.cfg.heartbeat_ms.clamp(250, 10_000));
             let start = Instant::now();
             let mut n: u32 = 0;
+            let mut detector = detect::VitalsDetector::default();
             loop {
                 n += 1;
                 let due = start + interval * n;
@@ -210,6 +204,9 @@ fn spawn_heartbeat(ctx: Arc<Ctx>) -> JoinHandle<()> {
                     vitals: ctx.vitals.lock().unwrap().clone(),
                 };
                 ctx.emit_critical(RecordType::Heartbeat, &hb);
+                for (kind, reason) in detector.on_heartbeat(&hb.vitals, hb.jitter_ms) {
+                    ctx.request_incident(kind, reason, now_ft());
+                }
             }
         })
         .expect("spawn heartbeat thread")
@@ -272,6 +269,18 @@ fn classify_previous(ctx: &Ctx, prev: Option<RunState>, boot: &bootinfo::BootInf
     if let Ok(b) = serde_json::to_vec_pretty(&v) {
         write_atomic(&ctx.paths.state().join(LAST_VERDICT_FILE), &b).ok();
     }
+    // An unplanned end: keep the black box from just before it, now, before
+    // pruning can reach it.
+    use bbx_core::classifier::VerdictKind as K;
+    if matches!(
+        v.kind,
+        K::Bugcheck | K::HangThenForcedOff | K::ForcedOffWhileAlive | K::DegradedThenReset | K::AbruptStop | K::SleepTransitionFailure
+    ) {
+        if let Some(la) = v.last_alive_ft {
+            let before = ctx.cfg.incident_before_min as i64 * 60 * FT_PER_SEC;
+            ctx.request_incident_window(format!("shutdown:{:?}", v.kind), v.summary.clone(), la, Some((la - before, la + 60 * FT_PER_SEC)));
+        }
+    }
 }
 
 /// Triggers, incidents, retention and disk-space protection.
@@ -280,7 +289,8 @@ fn maintenance(ctx: &Ctx) -> Result<()> {
     let mut last_prune = Instant::now() - Duration::from_secs(3600);
     while !ctx.stop.wait(Duration::from_secs(2)) {
         for t in take_triggers(ctx) {
-            open_incident(ctx, "manual", &t);
+            let reason = if t.is_empty() { "marked by user".to_string() } else { t };
+            ctx.request_incident("manual", reason, now_ft());
         }
         if last_prune.elapsed() >= Duration::from_secs(600) {
             last_prune = Instant::now();
@@ -320,40 +330,6 @@ fn take_triggers(ctx: &Ctx) -> Vec<String> {
         out.push(note);
     }
     out
-}
-
-fn open_incident(ctx: &Ctx, kind: &str, reason: &str) {
-    let t = now_ft();
-    let id = format!("{}-{kind}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
-    let folder = ctx.paths.incidents().join(&id);
-    if std::fs::create_dir_all(&folder).is_err() {
-        return;
-    }
-    let inc = rec::Incident { id: id.clone(), kind: kind.into(), reason: reason.into(), folder: folder.display().to_string() };
-    ctx.emit_critical(RecordType::Incident, &inc);
-    if let Ok(b) = serde_json::to_vec_pretty(&inc) {
-        std::fs::write(folder.join("incident.json"), b).ok();
-    }
-    log::info!("incident {id}: {reason}");
-    if blackbox::query().is_ok_and(|i| i.running) {
-        blackbox::roll().ok();
-    }
-    // Capture the aftermath, then keep the black-box window with the incident.
-    let before = ctx.cfg.incident_before_min as i64 * 60 * FT_PER_SEC;
-    let after = Duration::from_secs(ctx.cfg.incident_after_s);
-    let (bb_dir, journal) = (ctx.paths.blackbox(), ctx.journal.clone());
-    std::thread::spawn(move || {
-        std::thread::sleep(after);
-        blackbox::roll().ok();
-        let res = blackbox::link_window(&bb_dir, &folder.join("blackbox"), t - before, now_ft());
-        let detail = match &res {
-            Ok(n) => format!("{n} black-box files kept with incident {id}"),
-            Err(e) => format!("keeping black-box files for {id} failed: {e:#}"),
-        };
-        journal
-            .append(RecordType::BlackBox, &rec::BlackBox { action: "linked".into(), session: blackbox::SESSION_NAME.into(), detail }, false)
-            .ok();
-    });
 }
 
 fn prune_all(ctx: &Ctx) {

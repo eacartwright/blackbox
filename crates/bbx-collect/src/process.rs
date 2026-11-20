@@ -7,6 +7,7 @@
 
 use crate::ntapi::{self, ProcInfo};
 use crate::util::below_normal_priority;
+use crate::ctx::ProcStat;
 use crate::Ctx;
 use anyhow::Result;
 use bbx_core::records::{ProcRow, ProcessEnd, ProcessSample, ProcessStart, RecordType};
@@ -24,19 +25,19 @@ struct Seen {
     peak_private: u64,
 }
 
-struct ProcHandle(HANDLE);
+pub(crate) struct ProcHandle(pub(crate) HANDLE);
 impl Drop for ProcHandle {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.0) };
     }
 }
 
-fn open(pid: u32) -> Option<ProcHandle> {
+pub(crate) fn open(pid: u32) -> Option<ProcHandle> {
     let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     (!h.is_null()).then_some(ProcHandle(h))
 }
 
-fn image_path(h: &ProcHandle) -> String {
+pub(crate) fn image_path(h: &ProcHandle) -> String {
     let mut buf = vec![0u16; 1024];
     let mut len = buf.len() as u32;
     let ok = unsafe { QueryFullProcessImageNameW(h.0, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len) };
@@ -113,10 +114,17 @@ pub fn run(ctx: &Ctx) -> Result<()> {
             let is_new = prev.is_none();
             if is_new {
                 // pid reuse: the old process with this pid is gone.
+                let etw = ctx.etw_process_active();
                 if let Some(old) = seen.remove(&p.pid) {
-                    emit_end(ctx, &old);
+                    if !etw {
+                        emit_end(ctx, &old);
+                    }
                 }
-                emit_start(ctx, &p, if first { "inventory" } else { "sampler" }, &mut users);
+                // With live ETW running, starts come from ETW (exact time,
+                // short-lived processes); the sampler only does the inventory.
+                if first || !etw {
+                    emit_start(ctx, &p, if first { "inventory" } else { "sampler" }, &mut users);
+                }
             }
             let (cpu_pct, rd, wr, ot, hf) = match prev {
                 Some(s) => (
@@ -163,9 +171,28 @@ pub fn run(ctx: &Ctx) -> Result<()> {
 
         // Exited processes.
         let gone: Vec<u32> = seen.keys().filter(|pid| !alive.contains_key(pid)).copied().collect();
+        let etw = ctx.etw_process_active();
         for pid in gone {
             if let Some(s) = seen.remove(&pid) {
-                emit_end(ctx, &s);
+                if !etw {
+                    emit_end(ctx, &s);
+                }
+            }
+        }
+        {
+            // Lifetime totals for ETW process-end records.
+            let mut st = ctx.procstats.lock().unwrap();
+            st.clear();
+            for s in seen.values() {
+                st.insert(
+                    s.info.pid,
+                    ProcStat {
+                        create_ft: s.info.create_ft,
+                        cpu_ms: s.info.cpu_100ns / 10_000,
+                        peak_ws_kb: s.peak_ws / 1024,
+                        peak_private_kb: s.peak_private / 1024,
+                    },
+                );
             }
         }
 

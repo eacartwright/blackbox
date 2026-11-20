@@ -101,7 +101,7 @@ pub fn run(ctx: &Ctx) -> Result<()> {
             match known.get_mut(&id) {
                 None => {
                     let row = describe(&id, dn);
-                    ctx.emit(RecordType::Device, &Device { action: "added".into(), dev: row.clone(), old_problem: 0 });
+                    emit(ctx, Device { action: "added".into(), dev: row.clone(), old_problem: 0 });
                     known.insert(id.clone(), row);
                 }
                 Some(row) => {
@@ -110,7 +110,7 @@ pub fn run(ctx: &Ctx) -> Result<()> {
                         let old = row.problem;
                         row.problem = p;
                         let action = if p == 0 { "recovered" } else { "problem" };
-                        ctx.emit(RecordType::Device, &Device { action: action.into(), dev: row.clone(), old_problem: old });
+                        emit(ctx, Device { action: action.into(), dev: row.clone(), old_problem: old });
                     }
                 }
             }
@@ -119,11 +119,18 @@ pub fn run(ctx: &Ctx) -> Result<()> {
         let removed: Vec<String> = known.keys().filter(|k| !present.contains_key(*k)).cloned().collect();
         for id in removed {
             if let Some(row) = known.remove(&id) {
-                ctx.emit(RecordType::Device, &Device { action: "removed".into(), old_problem: row.problem, dev: row });
+                emit(ctx, Device { action: "removed".into(), old_problem: row.problem, dev: row });
             }
         }
     }
     Ok(())
+}
+
+fn emit(ctx: &Ctx, d: Device) {
+    ctx.emit(RecordType::Device, &d);
+    if let Some((kind, reason)) = crate::detect::match_device(&d) {
+        ctx.request_incident(kind, reason, bbx_core::time::now_ft());
+    }
 }
 
 #[cfg(test)]

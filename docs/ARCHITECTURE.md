@@ -130,26 +130,72 @@ safety (section 4). Roughly 50–150 MB per day before compression and
 | `Incident`, `Note` | on trigger | incident markers and user-supplied notes |
 | `CollectorStatus` | on change | collector errors, dropped events, budget actions; BlackBox reports on itself |
 
-Phase 2 adds rollups from the live ETW consumer: `NetFlow` (per process ×
-remote endpoint), `Dns`, `DiskIo` (per process × file, with worst latency),
-`FileActivity` and `RegistryActivity` (writes, creates, deletes and renames,
-aggregated per 10 s). A `ProcessStart` from ETW also catches processes that
-live for less than one sampler interval.
+The live ETW consumer (below) adds `NetFlows`, `DnsQueries`, `DiskActivity`,
+`FileActivity`, `RegistryActivity` and `DriverLoad`, and exact
+`ProcessStart`/`ProcessEnd` records with exit codes.
+
+### Live ETW consumer (phase 2)
+
+A second kernel session, `BlackBox-Live`, runs in real-time mode and is
+decoded inside the service. TDH (Windows' event schema API) is consulted
+once per event type to learn property names, types and lengths; after that
+each event is decoded by reading its bytes directly. Events that aren't used
+(file reads, registry queries, ...) are rejected by (event class, opcode)
+before any decoding, so for most of the stream the per-event cost is one
+GUID comparison.
+
+- Flags: process, thread, image load, disk I/O, disk file names, TCP/IP,
+  registry, file I/O initiation; plus the DNS-Client provider.
+- Kept state: thread to process, file object to path (from name/create
+  events), registry KCB to key path (from KCB create/rundown events), pid to
+  image name. All maps are bounded.
+- Output every 10 s: `NetFlows`, `DnsQueries`, `DiskActivity`,
+  `FileActivity`, `RegistryActivity` (top rows by weight plus must-keep rows
+  such as deletes, renames, failures and I/O slower than 500 ms; `dropped`
+  counts the rest), and immediately: `ProcessStart` (command line, user),
+  `ProcessEnd` (**exit code**), `DriverLoad`.
+- While the live consumer is running, the process sampler stops emitting
+  start/end records (ETW's are exact and include short-lived processes) but
+  keeps the inventory and per-process resource rows.
+- If the service dies, the live session is replaced on the next start; it
+  never outlives `bbx uninstall`.
 
 ### Tier 3 — incidents
 
-Phase 2 adds triggers:
+Triggers:
 
-- **Manual:** `bbx mark "note"`, the tray button, or a hotkey.
-- **Automatic:** sustained CPU or commit saturation, disk latency over 1 s,
-  heartbeat jitter (the collector itself was starved), display TDR, WHEA,
-  storport resets, application hangs, resource-exhaustion events.
+- **Manual:** `bbx mark "note"` (phase 3 adds a tray button and hotkey).
+- **Vitals:** CPU at or above 95% for 30 s, commit at or above 90% for 10 s,
+  under 256 MB RAM free for 10 s, disk latency at or above 1 s for 5 s, a
+  heartbeat more than 3 s late (the whole system stalled).
+- **Events** (only if less than 5 minutes old, so backfill and boot replay
+  never trigger): display TDR (Display 4101), WHEA errors, storage
+  controller resets (storahci/stornvme/... 129), disk errors (7, 11, 51, 153,
+  157), NTFS errors, application hangs (1002) and crashes (1000), resource
+  exhaustion (2004), firmware CPU throttling (Kernel-Processor-Power 37),
+  services terminating unexpectedly (7031, 7034), and live kernel events
+  (driver watchdogs).
+- **Devices:** a disk, display, storage or network adapter disappearing or
+  entering a problem code.
+- **Pool:** any kernel pool tag growing by another 1 GB since recording
+  started (driver leak).
+- **Unplanned shutdown:** at boot, a verdict of bugcheck, hang, forced
+  power-off, degraded reset, abrupt stop or sleep failure opens an incident
+  for the 15 minutes before the last heartbeat. That saves the previous
+  boot's black box before pruning can reach it.
 
-An incident forces a black-box roll, waits 60 s to capture the aftermath, then
-hard-links the black-box segments covering roughly T−15 min to T+1 min. It
-also exports the matching event log range and records an `Incident` record
-in the journal. `bbx export` packs a time range or incident into a
-self-contained bundle for the technician.
+Each kind has a 10-minute cooldown, and at most 6 automatic incidents are
+opened per hour (manual marks are never limited). An incident writes an
+`Incident` journal record and gets a folder with `incident.json`, hard links
+to the black-box files for the window, System and Application `.evtx`
+exports, and `summary.txt` (the `bbx around` report). For a live trigger it
+first waits `incident_after_s` (60 s) to capture the aftermath.
+
+`bbx export` packs a time range or an incident into a self-contained zip:
+`records.jsonl` (every journal record as JSON lines), `summary.txt`,
+`verdict.json`, `.evtx` exports, black-box `.etl` files (optional),
+minidumps, the incident folder and a `manifest.json`. This is the hand-off
+format for the phase 4 viewer and AI analysis.
 
 ---
 
@@ -296,10 +342,10 @@ Command lines, file paths, DNS names and (later) screenshots are sensitive.
    PDH and device samplers; event log collector; black-box ETW controller;
    shutdown classifier; Windows service; `bbx` CLI (install, uninstall,
    status, run, dump, last-shutdown, mark).
-2. **Live ETW and incidents.** Real-time ETW consumer with TDH decoding;
-   process start/stop with exit codes for short-lived processes; network,
-   DNS, disk, file and registry rollups; detectors and incidents; retention;
-   `bbx export` bundles.
+2. **Live ETW and incidents (built).** Real-time ETW consumer with TDH
+   decoding; process start/stop with exit codes, including short-lived
+   processes; network, DNS, disk, file and registry rollups; detectors and
+   incidents; `bbx export` bundles; `bbx diag live`.
 3. **User session and hardware.** Tray agent (hung-window detection, "it just
    happened" button, optional low-res screenshot ring, input activity); SMART
    and storage reliability; sensors; optional `pktmon` packet ring; bundle

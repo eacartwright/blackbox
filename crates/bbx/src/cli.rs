@@ -9,7 +9,7 @@ use bbx_core::journal;
 use bbx_core::paths::Paths;
 use bbx_core::records::{self as rec, type_name, RecordType};
 use bbx_core::time::{fmt_local, now_ft, parse_user_time, FT_PER_SEC};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
@@ -268,223 +268,125 @@ pub fn mark(note: &str) -> Result<()> {
 
 // ---------------------------------------------------------------- around
 
-#[derive(Default)]
-struct ProcAgg {
-    samples: u32,
-    cpu_sum: f64,
-    cpu_max: f64,
-    private_max: u64,
-    private_first: Option<u64>,
-    handles_max: u32,
-    io_max: u64,
-}
-
 pub fn around(time: &str, minutes: u64, after: u64) -> Result<()> {
     let paths = paths_readable()?;
     let t = parse_user_time(time)?;
-    let from = t - minutes as i64 * 60 * FT_PER_SEC;
-    let to = t + after as i64 * 60 * FT_PER_SEC;
-    println!("What was happening around {}  (window {} .. {})\n", fmt_local(t), fmt_local(from), fmt_local(to));
+    print!("{}", crate::report::around(&paths, t, minutes, after)?);
+    Ok(())
+}
 
-    let mut beats: Vec<(i64, rec::Heartbeat)> = Vec::new();
-    let mut names: HashMap<u32, String> = HashMap::new();
-    let mut procs: HashMap<u32, ProcAgg> = HashMap::new();
-    let mut notable: Vec<(i64, String)> = Vec::new();
-    let mut pdh: Vec<(i64, rec::PdhSample)> = Vec::new();
-    let mut pools: Vec<rec::PoolSample> = Vec::new();
+// ---------------------------------------------------------------- export / incidents
 
-    journal::for_each_record(&paths.journal(), Some(from), Some(to), |r| {
-        let Some(ty) = r.record_type() else { return true };
-        match ty {
-            RecordType::Heartbeat => {
-                if let Some(h) = r.parse() {
-                    beats.push((r.ft, h));
-                }
-            }
-            RecordType::ProcessSample => {
-                if let Some(s) = r.parse::<rec::ProcessSample>() {
-                    names.extend(s.names);
-                    for row in s.rows {
-                        let a = procs.entry(row.0).or_default();
-                        let cpu = row.1 as f64 / 10.0;
-                        a.samples += 1;
-                        a.cpu_sum += cpu;
-                        a.cpu_max = a.cpu_max.max(cpu);
-                        a.private_first.get_or_insert(row.3);
-                        a.private_max = a.private_max.max(row.3);
-                        a.handles_max = a.handles_max.max(row.4);
-                        a.io_max = a.io_max.max(row.6 + row.7 + row.8);
-                    }
-                }
-            }
-            RecordType::PdhSample => {
-                if let Some(s) = r.parse() {
-                    pdh.push((r.ft, s));
-                }
-            }
-            RecordType::PoolSample => {
-                if let Some(s) = r.parse() {
-                    pools.push(s);
-                }
-            }
-            RecordType::ProcessStart => {
-                if let Some(p) = r.parse::<rec::ProcessStart>() {
-                    names.insert(p.pid, p.name.clone());
-                    if p.source != "inventory" {
-                        let cl = if p.cmdline.is_empty() { p.name.clone() } else { p.cmdline.clone() };
-                        notable.push((r.ft, format!("process start  {}({}) parent {}: {}", p.name, p.pid, p.ppid, short(&cl, 160))));
-                    }
-                }
-            }
-            RecordType::ProcessEnd => {
-                if let Some(p) = r.parse::<rec::ProcessEnd>() {
-                    let code = p.exit_code.map(|c| format!(" exit 0x{:X}", c as u32)).unwrap_or_default();
-                    notable.push((r.ft, format!("process end    {}({}){code}, peak private {} MB", p.name, p.pid, p.peak_private_kb / 1024)));
-                }
-            }
-            RecordType::EventLog => {
-                if let Some(e) = r.parse::<rec::EventLog>() {
-                    let lvl = match e.level { 1 => "CRIT", 2 => "ERR ", 3 => "WARN", _ => "info" };
-                    let msg = e.message.as_deref().map(|m| short(m.lines().next().unwrap_or(""), 140)).unwrap_or_default();
-                    notable.push((e.event_ft, format!("event {lvl}     {}/{} {} {msg}", short_channel(&e.channel), e.provider, e.id)));
-                }
-            }
-            RecordType::Device => {
-                if let Some(d) = r.parse::<rec::Device>() {
-                    notable.push((r.ft, format!("device {:<8} {} [{}] problem={}", d.action, d.dev.name, d.dev.class, d.dev.problem)));
-                }
-            }
-            RecordType::SessionStart | RecordType::SessionEnd | RecordType::Incident | RecordType::Note | RecordType::ShutdownVerdict => {
-                notable.push((r.ft, format!("{:<14} {}", ty.name(), short(&r.json().to_string(), 160))));
-            }
-            RecordType::CollectorStatus => {
-                if let Some(s) = r.parse::<rec::CollectorStatus>() {
-                    if s.level != "info" {
-                        notable.push((r.ft, format!("collector {:<5} [{}] {}", s.level, s.collector, s.message)));
-                    }
-                }
-            }
-            _ => {}
-        }
-        true
-    })?;
+#[allow(clippy::too_many_arguments)]
+pub fn export(
+    incident: Option<String>,
+    around: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    minutes: u64,
+    after: u64,
+    out: Option<std::path::PathBuf>,
+    include_etl: bool,
+) -> Result<()> {
+    let paths = paths_readable()?;
+    let (from_ft, to_ft, at_ft) = if let Some(id) = &incident {
+        crate::export::incident_window(&paths, id)?
+    } else if let Some(a) = around {
+        let t = parse_user_time(&a)?;
+        (t - minutes as i64 * 60 * FT_PER_SEC, t + after as i64 * 60 * FT_PER_SEC, t)
+    } else {
+        let f = parse_user_time(from.as_deref().ok_or_else(|| anyhow!("give --incident, --around, or --from/--to"))?)?;
+        let t = to.map(|t| parse_user_time(&t)).transpose()?.unwrap_or_else(now_ft);
+        (f, t, t)
+    };
+    println!("Exporting {} .. {}{}", fmt_local(from_ft), fmt_local(to_ft), if include_etl { "" } else { " (without black-box files)" });
+    let out = crate::export::export(
+        &paths,
+        crate::export::ExportOptions { from_ft, to_ft, at_ft, incident, out, include_etl },
+    )?;
+    let mb = std::fs::metadata(&out).map(|m| m.len() as f64 / 1048576.0).unwrap_or(0.0);
+    println!("Wrote {} ({mb:.1} MB)", out.display());
+    Ok(())
+}
 
-    if beats.is_empty() {
-        println!("No recording covers this time.");
-        return Ok(());
+pub fn incidents() -> Result<()> {
+    let paths = paths_readable()?;
+    let mut list: Vec<rec::Incident> = std::fs::read_dir(paths.incidents())?
+        .flatten()
+        .filter_map(|e| std::fs::read(e.path().join("incident.json")).ok())
+        .filter_map(|b| serde_json::from_slice(&b).ok())
+        .collect();
+    list.sort_by_key(|i| i.at_ft);
+    if list.is_empty() {
+        println!("No incidents saved.");
     }
-
-    println!("VITALS (every ~10 s)");
-    println!("  {:<12} {:>5} {:>7} {:>9} {:>8} {:>6} {:>7}  busiest process", "time", "cpu%", "commit%", "free MB", "disk ms", "queue", "late ms");
-    let mut last_shown = 0i64;
-    for (ft, h) in &beats {
-        if *ft - last_shown < 10 * FT_PER_SEC && *ft != beats.last().unwrap().0 {
-            continue;
-        }
-        last_shown = *ft;
-        let v = &h.vitals;
-        if v.avail_mb == 0 && v.commit_pct == 0.0 {
-            continue; // heartbeat written before the first samples
-        }
-        let mark = if (*ft - t).abs() < 5 * FT_PER_SEC { " <==" } else { "" };
-        println!(
-            "  {:<12} {:>5.0} {:>7.0} {:>9} {:>8.0} {:>6.1} {:>7}  {}{mark}",
-            &fmt_local(*ft)[11..23],
-            v.cpu,
-            v.commit_pct,
-            v.avail_mb,
-            v.disk_ms,
-            v.disk_q,
-            h.jitter_ms,
-            v.top.clone().unwrap_or_default()
-        );
-    }
-    let gaps: Vec<_> = beats.windows(2).filter(|w| (w[1].0 - w[0].0) > 5 * FT_PER_SEC).collect();
-    for g in gaps {
-        println!("  !! no heartbeat for {} s between {} and {}", (g[1].0 - g[0].0) / FT_PER_SEC, fmt_local(g[0].0), fmt_local(g[1].0));
-    }
-
-    if let Some((_, worst)) = pdh.iter().max_by(|a, b| {
-        let m = |s: &rec::PdhSample| s.disks.iter().map(|d| d.ms).fold(0.0f32, f32::max);
-        m(&a.1).total_cmp(&m(&b.1))
-    }) {
-        println!("\nWORST DISK MOMENT");
-        for d in &worst.disks {
-            println!("  {:<20} {:>8.1} ms  queue {:>5.1}  {:>8.1} MB/s  idle {:>5.1}%", d.disk, d.ms, d.queue, d.bps / 1048576.0, d.idle_pct);
-        }
-        if worst.cpu.perf > 0.0 {
-            println!("  CPU performance {:.0}% of base, DPC {:.1}%, interrupts {:.1}%", worst.cpu.perf, worst.cpu.dpc_pct, worst.cpu.intr_pct);
-        }
-        for z in &worst.thermal {
-            println!("  thermal {:<20} {:>5.1} °C  passive limit {:.0}%", z.zone, z.celsius, z.passive_pct);
-        }
-    }
-
-    let mut top: Vec<(&u32, &ProcAgg)> = procs.iter().collect();
-    top.sort_by(|a, b| b.1.cpu_sum.total_cmp(&a.1.cpu_sum));
-    println!("\nTOP PROCESSES BY CPU");
-    println!("  {:<28} {:>7} {:>7} {:>11} {:>11} {:>8}", "process", "avg%", "max%", "private MB", "growth MB", "handles");
-    for (pid, a) in top.iter().take(10) {
-        let name = names.get(pid).cloned().unwrap_or_else(|| "?".into());
-        println!(
-            "  {:<28} {:>7.1} {:>7.1} {:>11} {:>11} {:>8}",
-            short(&format!("{name}({pid})"), 28),
-            a.cpu_sum / a.samples.max(1) as f64,
-            a.cpu_max,
-            a.private_max / 1024,
-            (a.private_max as i64 - a.private_first.unwrap_or(0) as i64) / 1024,
-            a.handles_max
-        );
-    }
-    let mut mem: Vec<(&u32, &ProcAgg)> = procs.iter().filter(|(_, a)| a.private_max > a.private_first.unwrap_or(0) + 50 * 1024).collect();
-    if !mem.is_empty() {
-        mem.sort_by_key(|(_, a)| std::cmp::Reverse(a.private_max - a.private_first.unwrap_or(0)));
-        println!("\nMEMORY GROWERS (private bytes grew > 50 MB in the window)");
-        for (pid, a) in mem.iter().take(5) {
-            let name = names.get(pid).cloned().unwrap_or_else(|| "?".into());
-            println!("  {name}({pid}): {} MB -> {} MB", a.private_first.unwrap_or(0) / 1024, a.private_max / 1024);
-        }
-    }
-    if let (Some(first), Some(last)) = (pools.first(), pools.last()) {
-        let before: BTreeMap<&str, u64> = first.tags.iter().map(|t| (t.tag.as_str(), t.paged + t.nonpaged)).collect();
-        let mut growth: Vec<(String, i64)> = last
-            .tags
-            .iter()
-            .filter_map(|t| before.get(t.tag.as_str()).map(|b| (t.tag.clone(), (t.paged + t.nonpaged) as i64 - *b as i64)))
-            .filter(|(_, d)| *d > 16 * 1048576)
-            .collect();
-        if !growth.is_empty() {
-            growth.sort_by_key(|g| std::cmp::Reverse(g.1));
-            println!("\nKERNEL POOL GROWTH (possible driver leak)");
-            for (tag, d) in growth.iter().take(5) {
-                println!("  tag '{tag}': +{} MB", d / 1048576);
-            }
-        }
-    }
-
-    notable.sort_by_key(|n| n.0);
-    println!("\nTIMELINE");
-    if notable.is_empty() {
-        println!("  (no process starts/ends, events, device changes or incidents in this window)");
-    }
-    for (ft, s) in notable.iter().take(300) {
-        let mark = if (*ft - t).abs() < 5 * FT_PER_SEC { "==>" } else { "   " };
-        println!("{mark} {}  {s}", &fmt_local(*ft)[11..23]);
-    }
-    if notable.len() > 300 {
-        println!("    ... {} more (use `bbx dump --from ... --to ...`)", notable.len() - 300);
+    for i in list {
+        let etl = blackbox::list_files(&paths.incidents().join(&i.id).join("blackbox")).len();
+        println!("{}  {:<40} {} [{} black-box files]", fmt_local(i.at_ft), i.id, crate::report::short(&i.reason, 90), etl);
     }
     Ok(())
 }
 
-fn short(s: &str, n: usize) -> String {
-    if s.chars().count() <= n {
-        s.to_string()
-    } else {
-        s.chars().take(n - 1).collect::<String>() + "…"
-    }
-}
+// ---------------------------------------------------------------- diag
 
-fn short_channel(c: &str) -> String {
-    c.trim_start_matches("Microsoft-Windows-").to_string()
+/// Run the live consumer against a private session and journal, then show
+/// what was decoded. Verifies kernel-event decoding on this machine.
+pub fn diag_live(secs: u64) -> Result<()> {
+    if !crate::install::is_elevated() {
+        bail!("`bbx diag live` needs an elevated (Administrator) prompt");
+    }
+    let dir = std::env::temp_dir().join(format!("bbx-diag-{}", std::process::id()));
+    let paths = Paths::at(&dir);
+    paths.ensure()?;
+    let (j, _) = journal::JournalWriter::open(&paths.journal(), Default::default())?;
+    let stop = Stop::new();
+    let ctx = bbx_collect::Ctx::new(Arc::new(j), Default::default(), paths.clone(), stop.clone(), 0);
+    println!("Recording live ETW for {secs} s (open some files, browse a web page, change a setting)...");
+    let res = std::thread::scope(|s| {
+        let c = &ctx;
+        let t = s.spawn(move || bbx_collect::etwlive::run_named(c, "BlackBox-Diag"));
+        std::thread::sleep(std::time::Duration::from_secs(secs));
+        stop.signal();
+        t.join().map_err(|_| anyhow!("consumer panicked"))?
+    });
+    ctx.journal.commit()?;
+    let mut counts: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut samples: Vec<String> = Vec::new();
+    journal::for_each_record(&paths.journal(), None, None, |r| {
+        let v = r.json();
+        let rows = v.get("rows").and_then(|x| x.as_array()).map(|a| a.len()).unwrap_or(1);
+        let e = counts.entry(type_name(r.rtype)).or_default();
+        e.0 += 1;
+        e.1 += rows;
+        if let Some(a) = v.get("rows").and_then(|x| x.as_array()) {
+            for row in a.iter().take(3) {
+                samples.push(format!("{:<17} {}", type_name(r.rtype), crate::report::short(&row.to_string(), 200)));
+            }
+        } else if matches!(r.record_type(), Some(RecordType::ProcessStart | RecordType::ProcessEnd | RecordType::DriverLoad)) {
+            samples.push(format!("{:<17} {}", type_name(r.rtype), crate::report::short(&v.to_string(), 200)));
+        }
+        true
+    })?;
+    println!("
+Records produced:");
+    for (k, (n, rows)) in &counts {
+        println!("  {k:<18} {n:>5} records {rows:>7} rows");
+    }
+    println!("
+Samples:");
+    for s in samples.iter().take(40) {
+        println!("  {s}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+    res?;
+    let expect = ["NetFlows", "DiskActivity", "FileActivity", "RegistryActivity"];
+    let missing: Vec<_> = expect.iter().filter(|k| !counts.contains_key(**k)).collect();
+    if missing.is_empty() {
+        println!("
+OK: kernel network, disk, file and registry events are being decoded.");
+    } else {
+        println!("
+NOTE: no {missing:?} records in this run (there may simply have been no such activity).");
+    }
+    Ok(())
 }

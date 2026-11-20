@@ -311,6 +311,9 @@ fn drain(ctx: &Ctx, s: &mut Sub, pubs: &mut Publishers) {
             if let Some(rec) = to_record(h.0, pubs) {
                 let ft = if rec.event_ft > 0 { rec.event_ft } else { now_ft() };
                 ctx.emit_at(RecordType::EventLog, ft, &rec);
+                if let Some((kind, reason)) = crate::detect::match_event(&rec) {
+                    ctx.request_incident(kind, reason, ft);
+                }
             }
             unsafe { EvtUpdateBookmark(s.bookmark.0 as _, h.0 as _) };
             s.dirty = true;
@@ -338,6 +341,22 @@ pub fn to_record(h: EvtHandle, pubs: &mut Publishers) -> Option<EventLog> {
         message,
         data: p.data,
     })
+}
+
+/// Export `channel` events between two FILETIMEs to an .evtx file.
+pub fn export_range(channel: &str, from_ft: i64, to_ft: i64, target: &std::path::Path) -> Result<()> {
+    use windows_sys::Win32::System::EventLog::EvtExportLog;
+    const EVT_EXPORT_LOG_CHANNEL_PATH: u32 = 1;
+    let q = format!(
+        "*[System[TimeCreated[@SystemTime>='{}' and @SystemTime<='{}']]]",
+        bbx_core::time::fmt_utc(from_ft),
+        bbx_core::time::fmt_utc(to_ft)
+    );
+    let (wc, wq, wt) = (wide(channel), wide(&q), crate::util::wide_path(target));
+    if unsafe { EvtExportLog(0 as _, wc.as_ptr(), wq.as_ptr(), wt.as_ptr(), EVT_EXPORT_LOG_CHANNEL_PATH) } == 0 {
+        return Err(anyhow!("exporting {channel} failed: error {}", last_error()));
+    }
+    Ok(())
 }
 
 /// One-shot query (used by the boot evidence gatherer).

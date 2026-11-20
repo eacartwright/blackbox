@@ -62,6 +62,7 @@ pub fn run(ctx: &Ctx) -> Result<()> {
     let mut prev = cpu_times();
     let mut last_pool = Instant::now() - pool_every;
     let mut pool_prev: HashMap<String, u64> = HashMap::new();
+    let mut pool_det = crate::detect::PoolDetector::default();
 
     // Memory vitals don't need a delta: publish them immediately so the very
     // first heartbeats already carry a known state.
@@ -121,7 +122,13 @@ pub fn run(ctx: &Ctx) -> Result<()> {
         if last_pool.elapsed() >= pool_every {
             last_pool = Instant::now();
             match ntapi::pool_tags() {
-                Ok(tags) => ctx.emit(RecordType::PoolSample, &pool_sample(tags, &mut pool_prev)),
+                Ok(tags) => {
+                    let sample = pool_sample(tags, &mut pool_prev);
+                    for (kind, reason) in pool_det.on_sample(&sample.tags) {
+                        ctx.request_incident(kind, reason, bbx_core::time::now_ft());
+                    }
+                    ctx.emit(RecordType::PoolSample, &sample);
+                }
                 Err(e) => log::debug!("pool tags unavailable: {e:#}"),
             }
         }

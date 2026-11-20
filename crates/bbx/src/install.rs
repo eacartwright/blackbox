@@ -217,7 +217,8 @@ pub fn uninstall(purge: bool) -> Result<()> {
         Err(_) => println!("Service was not installed"),
     }
     blackbox::stop()?;
-    println!("Black-box ETW session stopped");
+    bbx_collect::etwlive::stop_session(bbx_collect::etwlive::LIVE_SESSION);
+    println!("Black-box and live ETW sessions stopped");
     let paths = Paths::from_env();
     if purge {
         std::fs::remove_dir_all(&paths.root).map_err(|e| anyhow!("removing {}: {e}", paths.root.display()))?;

@@ -29,6 +29,12 @@ pub enum RecordType {
     EventLog = 22,
     Incident = 30,
     BlackBox = 31,
+    NetFlows = 40,
+    DnsQueries = 41,
+    DiskActivity = 42,
+    FileActivity = 43,
+    RegistryActivity = 44,
+    DriverLoad = 45,
 }
 
 impl RecordType {
@@ -37,7 +43,8 @@ impl RecordType {
         Self::ShutdownVerdict, Self::Note, Self::CollectorStatus, Self::SystemSample,
         Self::PoolSample, Self::ProcessSample, Self::ProcessStart, Self::ProcessEnd,
         Self::PdhSample, Self::Device, Self::DeviceInventory, Self::EventLog,
-        Self::Incident, Self::BlackBox,
+        Self::Incident, Self::BlackBox, Self::NetFlows, Self::DnsQueries,
+        Self::DiskActivity, Self::FileActivity, Self::RegistryActivity, Self::DriverLoad,
     ];
 
     pub fn from_u16(v: u16) -> Option<Self> {
@@ -64,6 +71,12 @@ impl RecordType {
             Self::EventLog => "EventLog",
             Self::Incident => "Incident",
             Self::BlackBox => "BlackBox",
+            Self::NetFlows => "NetFlows",
+            Self::DnsQueries => "DnsQueries",
+            Self::DiskActivity => "DiskActivity",
+            Self::FileActivity => "FileActivity",
+            Self::RegistryActivity => "RegistryActivity",
+            Self::DriverLoad => "DriverLoad",
         }
     }
 
@@ -365,6 +378,14 @@ pub struct Incident {
     pub reason: String,
     #[serde(default)]
     pub folder: String,
+    /// When it happened.
+    #[serde(default)]
+    pub at_ft: i64,
+    /// Black-box / event-log window kept with the incident.
+    #[serde(default)]
+    pub from_ft: i64,
+    #[serde(default)]
+    pub to_ft: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -375,6 +396,125 @@ pub struct BlackBox {
     pub session: String,
     #[serde(default)]
     pub detail: String,
+}
+
+// ---------------------------------------------------------------- live ETW rollups
+// One record per category per window. `dropped` counts rows beyond the cap
+// (the black box still has every individual event).
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NetRow {
+    pub pid: u32,
+    pub proc: String,
+    /// "tcp" | "udp"
+    pub proto: String,
+    /// "ip:port" (IPv6 in brackets)
+    pub remote: String,
+    pub sent: u64,
+    pub recv: u64,
+    pub connects: u32,
+    pub retrans: u32,
+    pub fails: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NetFlows {
+    pub window_s: u32,
+    pub rows: Vec<NetRow>,
+    #[serde(default)]
+    pub dropped: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DnsRow {
+    pub pid: u32,
+    pub proc: String,
+    pub name: String,
+    pub qtype: u32,
+    /// 0 = success; 9003 = no such name; 1460 = timeout; ...
+    pub status: u32,
+    pub count: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub results: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DnsQueries {
+    pub window_s: u32,
+    pub rows: Vec<DnsRow>,
+    #[serde(default)]
+    pub dropped: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DiskIoRow {
+    pub pid: u32,
+    pub proc: String,
+    pub disk: u32,
+    pub file: String,
+    pub reads: u32,
+    pub writes: u32,
+    pub read_bytes: u64,
+    pub write_bytes: u64,
+    /// Slowest single I/O, ms.
+    pub max_ms: f32,
+    pub total_ms: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DiskActivity {
+    pub window_s: u32,
+    pub rows: Vec<DiskIoRow>,
+    #[serde(default)]
+    pub dropped: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FileRow {
+    pub pid: u32,
+    pub proc: String,
+    pub path: String,
+    pub creates: u32,
+    pub writes: u32,
+    pub write_bytes: u64,
+    pub deletes: u32,
+    pub renames: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FileActivity {
+    pub window_s: u32,
+    pub rows: Vec<FileRow>,
+    #[serde(default)]
+    pub dropped: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RegRow {
+    pub pid: u32,
+    pub proc: String,
+    pub key: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub value: String,
+    pub sets: u32,
+    pub deletes: u32,
+    pub creates: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RegistryActivity {
+    pub window_s: u32,
+    pub rows: Vec<RegRow>,
+    #[serde(default)]
+    pub dropped: u32,
+}
+
+/// A kernel driver loaded after recording started.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DriverLoad {
+    pub path: String,
+    pub base: String,
+    pub size: u64,
 }
 
 #[cfg(test)]

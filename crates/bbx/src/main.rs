@@ -2,7 +2,10 @@
 
 mod agent;
 mod cli;
+mod export;
+mod incidents;
 mod install;
+mod report;
 mod service;
 
 use anyhow::Result;
@@ -80,6 +83,36 @@ enum Cmd {
         /// What the user saw.
         note: Vec<String>,
     },
+    /// Package a time range or incident into one .zip for analysis elsewhere.
+    Export {
+        /// An incident id (folder name under incidents\).
+        #[arg(long)]
+        incident: Option<String>,
+        /// Centre time, e.g. "16:30" (with --minutes / --after).
+        #[arg(long, allow_hyphen_values = true)]
+        around: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        from: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        to: Option<String>,
+        #[arg(short, long, default_value_t = 15)]
+        minutes: u64,
+        #[arg(short, long, default_value_t = 2)]
+        after: u64,
+        /// Output .zip path.
+        #[arg(short, long)]
+        out: Option<std::path::PathBuf>,
+        /// Leave out black-box .etl files (much smaller).
+        #[arg(long)]
+        no_etl: bool,
+    },
+    /// List saved incidents.
+    Incidents,
+    /// Diagnostics. `bbx diag live` checks live ETW decoding (elevated).
+    Diag {
+        #[command(subcommand)]
+        what: DiagCmd,
+    },
     /// Black-box ETW session control.
     Blackbox {
         #[command(subcommand)]
@@ -88,6 +121,15 @@ enum Cmd {
     /// Entry point used by the Windows service manager.
     #[command(hide = true)]
     Service,
+}
+
+#[derive(Subcommand)]
+enum DiagCmd {
+    /// Run the live ETW consumer for a few seconds and show what it decoded.
+    Live {
+        #[arg(long, default_value_t = 15)]
+        secs: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -115,6 +157,11 @@ fn main() {
         Cmd::LastShutdown => cli::last_shutdown(),
         Cmd::Dump { from, to, types, last, json } => cli::dump(from, to, types, last, json),
         Cmd::Mark { note } => cli::mark(&note.join(" ")),
+        Cmd::Export { incident, around, from, to, minutes, after, out, no_etl } => {
+            cli::export(incident, around, from, to, minutes, after, out, !no_etl)
+        }
+        Cmd::Incidents => cli::incidents(),
+        Cmd::Diag { what: DiagCmd::Live { secs } } => cli::diag_live(secs),
         Cmd::Blackbox { action } => match action {
             BlackboxCmd::Status => cli::blackbox_status(),
             BlackboxCmd::Roll => bbx_collect::blackbox::roll(),
