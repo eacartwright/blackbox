@@ -7,6 +7,7 @@ pub mod ctx;
 pub mod detect;
 pub mod devices;
 pub mod devpath;
+pub mod etlread;
 pub mod etwlive;
 pub mod eventlog;
 pub mod evidence;

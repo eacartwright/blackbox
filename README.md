@@ -68,6 +68,24 @@ starts the tray agent at every sign-in, stores data under
 
 Pass `--no-system-changes` to skip that last part.
 
+On the technician's machine, open a bundle a client sent you:
+
+```bash
+bbx view blackbox-PC01-20261119-163000.zip.age -i blackbox-tech.key
+```
+
+That opens the viewer in your browser. It has the timeline with playback, ranked suspects, black-box drill-down and screenshots. Its **Claude analysis** tab explains what happened if `ANTHROPIC_API_KEY` is set. The same analysis from the command line:
+
+```bash
+bbx analyze bundle.zip --question "why did the screen go black?"
+```
+
+On the client machine itself, without exporting:
+
+```bash
+bbx view --local --around 16:30
+```
+
 When the user says "it froze at 4:30":
 
 ```bash
@@ -90,6 +108,10 @@ Other commands:
 | `bbx incidents` | List saved incidents (manual marks and automatic detections) |
 | `bbx export --incident <id>` | One .zip with records, report, event logs, black-box files and dumps (`--around 16:30`, `--from/--to`, `--no-etl`) |
 | `bbx diag live` | Elevated: run the live ETW decoder for 15 s and show what it captured |
+| `bbx view <bundle> [-i key]` | Viewer: charts, event lanes, playback, suspects, moment details, black-box rows, screenshots, Claude analysis (`--local --around 16:30` reads this machine) |
+| `bbx suspects <bundle>` | Rule-based ranked causes with evidence |
+| `bbx digest <bundle> [-o file]` | The text that `analyze` would send, to review first |
+| `bbx analyze <bundle> [-q question]` | Ask Claude (`claude-opus-5-5`) what happened; needs `ANTHROPIC_API_KEY` |
 | `bbx keygen` | Create a technician key; put its `age1...` public key in client `config.json` as `export_recipients` |
 | `bbx decrypt <bundle.age> -i blackbox-tech.key` | Open an encrypted bundle |
 | `bbx blackbox status` | ETW session state and files |
@@ -115,10 +137,10 @@ contains the in-memory ETW buffers.
 
 ## Status
 
-Phases 1 (foundation), 2 (live ETW, detectors, incidents, export) and 3
-(tray agent, disk and power health, packet ring, encrypted bundles) are
-built and tested. Phase 4 (viewer and AI analysis) is described in the
-architecture doc.
+All four phases are built and tested: 1 (foundation), 2 (live ETW,
+detectors, incidents, export), 3 (tray agent, disk and power health, packet
+ring, encrypted bundles) and 4 (viewer, suspects, black-box drill-down,
+Claude analysis).
 
 Incidents open automatically for sustained CPU / memory / disk trouble,
 system stalls, display driver resets, WHEA hardware errors, storage resets,

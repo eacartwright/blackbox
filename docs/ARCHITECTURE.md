@@ -272,6 +272,59 @@ folder (open in Wireshark) and starts a new one.
 the bundle to those keys and deletes the plaintext; `bbx decrypt` (or the
 standard `age` tool) opens it.
 
+### Viewer and analysis (phase 4)
+
+Everything on the technician side works from a **dataset**: the records of
+a time window plus the black-box files, screenshots, verdict and incident
+that go with it, loaded from an export bundle (`.zip`, or `.zip.age` with
+the technician key) or, with `--local`, straight from the journal.
+
+- **Suspects** (`bbx suspects`): about twenty deterministic rules that rank
+  likely causes with their evidence. They cover the shutdown verdict,
+  commit and RAM exhaustion with the processes that grew, kernel-pool
+  leaks, disk latency and storage errors, SMART/NVMe health, CPU
+  saturation, thermal or power throttling, DPC/interrupt storms, display
+  driver resets and black screens, WHEA hardware errors, crashed processes
+  with named NTSTATUS codes, hangs and whole-system stalls (late or missing
+  heartbeats), failing devices, service crashes, battery, network/DNS/Wi-Fi
+  trouble, and what ran around the moment (tasks, Defender, Windows Update,
+  driver loads). Findings within 5 minutes of the moment of interest score
+  higher.
+- **Digest** (`bbx digest`): a self-contained Markdown summary (machine,
+  window, user notes, verdict, suspects, disk health, and the full
+  situation report), capped at about 220k characters with an explicit note
+  if the timeline had to be shortened. It is exactly what `bbx analyze`
+  sends, so a technician can review or redact it first.
+- **Claude analysis** (`bbx analyze`, or the viewer's Claude tab): one
+  streamed Messages API request (`claude-opus-5-5` by default, adaptive
+  thinking, effort `high`) with a fixed system prompt that asks for what
+  happened, ranked causes with confidence and evidence, what is ruled out,
+  gaps, next steps and a plain-language note for the user. The digest is
+  sent with prompt caching, so follow-up questions about the same incident
+  reuse it. Server-side refusal fallbacks are enabled (`fallbacks:
+  "default"`); refusals, rate limits, 5xx and transport errors are retried
+  or reported clearly. Credentials come from `ANTHROPIC_API_KEY` (or
+  `ANTHROPIC_AUTH_TOKEN`) on the technician's machine; nothing is sent
+  unless the technician asks.
+- **Black-box drill-down**: an offline ETW reader replays the `.etl` files
+  for a window of up to 5 minutes and returns Procmon-style rows: process
+  start/exit with command lines, image loads, file create/write/delete/
+  rename (and optionally reads), registry writes (and optionally queries),
+  TCP/UDP, disk I/O with latency, DNS, plus a generic decoding of every
+  other provider. It needs no admin rights, and file and registry names are
+  resolved from the trace's own name and rundown events.
+- **Viewer** (`bbx view`): a local web app served from `bbx.exe` on
+  127.0.0.1 only. Every request needs a random per-run token, and requests
+  whose `Host` isn't the loopback address are refused. The page is one
+  embedded HTML file with no external resources and a strict
+  Content-Security-Policy, and everything from the bundle is rendered as
+  text. It has stacked charts (CPU, commit, free RAM, disk latency,
+  network, GPU, heartbeat lateness), event lanes (incidents, event logs,
+  user session, processes, devices, BlackBox) with drag-to-zoom, a
+  playhead and timed playback, the suspects list, and tabs for the moment
+  under the playhead, the filterable timeline, black-box rows, screenshots,
+  Claude analysis and the text report.
+
 ---
 
 ## 4. Journal format (crash-safety contract)
@@ -427,6 +480,7 @@ Command lines, file paths, DNS names and (later) screenshots are sensitive.
    temperature; power/battery; optional `pktmon` packet ring; encrypted
    bundles. Not covered: CPU/GPU temperatures beyond ACPI thermal zones
    (those need vendor libraries or a kernel driver).
-4. **Viewer and AI.** Timeline playback across all tiers, black-box
-   drill-down, rules-based suspects, and an AI narrative built from a compact
-   incident digest.
+4. **Viewer and AI (built).** `bbx view` timeline playback across all tiers,
+   black-box drill-down, rule-based suspects, the digest, and Claude analysis
+   (`bbx analyze`). Startup failures of the service are also written to the
+   Application event log and shown by `bbx status`.

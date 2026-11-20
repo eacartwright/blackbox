@@ -20,6 +20,31 @@ pub const DESCRIPTION: &str =
 
 define_windows_service!(ffi_service_main, service_main);
 
+/// Write an error to the Application event log (source "BlackBox") so it is
+/// visible without admin rights (the BlackBox log file is admin-only).
+pub fn report_to_event_log(msg: &str) {
+    use windows_sys::Win32::System::EventLog::{DeregisterEventSource, RegisterEventSourceW, ReportEventW, EVENTLOG_ERROR_TYPE};
+    let src: Vec<u16> = "BlackBox".encode_utf16().chain(Some(0)).collect();
+    let text: Vec<u16> = msg.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let h = RegisterEventSourceW(std::ptr::null(), src.as_ptr());
+        if h.is_null() {
+            return;
+        }
+        let strings = [text.as_ptr()];
+        ReportEventW(h, EVENTLOG_ERROR_TYPE, 0, 1, std::ptr::null_mut(), 1, 0, strings.as_ptr(), std::ptr::null());
+        DeregisterEventSource(h);
+    }
+}
+
+/// The newest startup error the service reported, if any.
+pub fn last_reported_error() -> Option<(i64, String)> {
+    let ev = bbx_collect::eventlog::query("Application", "*[System[Provider[@Name='BlackBox'] and Level=2]]", 500).ok()?;
+    let e = ev.last()?;
+    let text = e.message.clone().or_else(|| e.data.values().next().and_then(|v| v.as_str()).map(String::from))?;
+    Some((e.event_ft, text))
+}
+
 pub fn run_dispatcher() -> Result<()> {
     service_dispatcher::start(SERVICE_NAME, ffi_service_main)?;
     Ok(())
@@ -65,6 +90,7 @@ fn run_service() -> Result<()> {
     let mut st = status(ServiceState::Stopped, ServiceControlAccept::empty(), 0);
     if let Err(e) = &result {
         log::error!("agent exited with error: {e:#}");
+        report_to_event_log(&format!("BlackBox could not start recording: {e:#}"));
         // A non-zero exit makes SCM apply the recovery (restart) actions.
         st.exit_code = ServiceExitCode::ServiceSpecific(1);
     }

@@ -1,14 +1,19 @@
 //! bbx — BlackBox flight recorder for Windows.
 
 mod agent;
+mod ai;
 mod cli;
 mod crypto;
+mod dataset;
+mod digest;
 mod export;
 mod incidents;
 mod ingest;
 mod install;
 mod report;
 mod service;
+mod suspects;
+mod viewer;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -132,6 +137,46 @@ enum Cmd {
         #[command(subcommand)]
         what: DiagCmd,
     },
+    /// Open the viewer: timeline playback, suspects, black-box drill-down
+    /// and Claude analysis, in the browser.
+    View {
+        #[command(flatten)]
+        src: Source,
+        /// Port on 127.0.0.1 (0 = any free port).
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Print the URL but don't open a browser.
+        #[arg(long)]
+        no_browser: bool,
+        /// Claude model for analysis.
+        #[arg(long, default_value = ai::DEFAULT_MODEL)]
+        model: String,
+    },
+    /// Print the rule-based suspects for a bundle.
+    Suspects {
+        #[command(flatten)]
+        src: Source,
+    },
+    /// Write the digest that `analyze` sends to Claude (to review it first).
+    Digest {
+        #[command(flatten)]
+        src: Source,
+        #[arg(short, long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Ask Claude what happened (needs ANTHROPIC_API_KEY).
+    Analyze {
+        #[command(flatten)]
+        src: Source,
+        /// An optional question to focus the analysis.
+        #[arg(short, long)]
+        question: Option<String>,
+        #[arg(long, default_value = ai::DEFAULT_MODEL)]
+        model: String,
+        /// Also save the answer (Markdown).
+        #[arg(short, long)]
+        out: Option<std::path::PathBuf>,
+    },
     /// Black-box ETW session control.
     Blackbox {
         #[command(subcommand)]
@@ -140,6 +185,27 @@ enum Cmd {
     /// Entry point used by the Windows service manager.
     #[command(hide = true)]
     Service,
+}
+
+/// Where the data comes from: a bundle, or this machine's own journal.
+#[derive(clap::Args)]
+struct Source {
+    /// Export bundle (.zip, or .zip.age with -i).
+    bundle: Option<std::path::PathBuf>,
+    /// Technician key for encrypted bundles.
+    #[arg(short, long)]
+    identity: Option<std::path::PathBuf>,
+    /// Read this machine's journal instead of a bundle (elevated).
+    #[arg(long)]
+    local: bool,
+    /// With --local: centre time, e.g. "16:30" or "-20m".
+    #[arg(long, allow_hyphen_values = true)]
+    around: Option<String>,
+    /// With --local: minutes before / after the centre time.
+    #[arg(short, long, default_value_t = 30)]
+    minutes: u64,
+    #[arg(short, long, default_value_t = 5)]
+    after: u64,
 }
 
 #[derive(Subcommand)]
@@ -159,6 +225,21 @@ enum BlackboxCmd {
     Roll,
     /// Stop the session (the service restarts it unless stopped too).
     Stop,
+}
+
+fn load(src: &Source) -> Result<dataset::Dataset> {
+    use bbx_core::time::{now_ft, parse_user_time, FT_PER_SEC};
+    if src.local {
+        let paths = bbx_core::paths::Paths::from_env();
+        let at = src.around.as_deref().map(parse_user_time).transpose()?.unwrap_or_else(now_ft);
+        let from = at - src.minutes as i64 * 60 * FT_PER_SEC;
+        let to = (at + src.after as i64 * 60 * FT_PER_SEC).min(now_ft());
+        return dataset::Dataset::open_local(&paths, from, to, at);
+    }
+    let b = src.bundle.as_ref().ok_or_else(|| anyhow::anyhow!("give a bundle path, or --local"))?;
+    let ds = dataset::Dataset::open_bundle(b, src.identity.as_deref())?;
+    eprintln!("Loaded {} records from {}", ds.records.len(), b.display());
+    Ok(ds)
 }
 
 fn main() {
@@ -189,6 +270,43 @@ fn main() {
             crypto::read_identities(&identity).and_then(|ids| crypto::decrypt_file(&file, &out, &ids)).map(|_| println!("Wrote {}", out.display()))
         }
         Cmd::Incidents => cli::incidents(),
+        Cmd::View { src, port, no_browser, model } => {
+            load(&src).and_then(|ds| viewer::serve(ds, viewer::ViewOptions { port, open_browser: !no_browser, model }))
+        }
+        Cmd::Suspects { src } => load(&src).map(|ds| print!("{}", suspects::to_text(&suspects::analyze(&ds)))),
+        Cmd::Digest { src, out } => load(&src).and_then(|ds| {
+            let d = digest::build(&ds, &suspects::analyze(&ds));
+            match out {
+                Some(p) => std::fs::write(&p, &d).map(|_| println!("Wrote {} ({} KB)", p.display(), d.len() / 1024)).map_err(Into::into),
+                None => {
+                    print!("{d}");
+                    Ok(())
+                }
+            }
+        }),
+        Cmd::Analyze { src, question, model, out } => load(&src).and_then(|ds| {
+            let d = digest::build(&ds, &suspects::analyze(&ds));
+            eprintln!("Sending a {} KB digest to {model}...", d.len() / 1024);
+            let r = ai::analyze(&model, &d, question.as_deref(), None, |t| {
+                use std::io::Write;
+                print!("{t}");
+                std::io::stdout().flush().ok();
+            })?;
+            println!();
+            eprintln!(
+                "[{}: {} input tokens ({} cached), {} output tokens{}]",
+                r.model,
+                r.input_tokens + r.cache_read_tokens + r.cache_write_tokens,
+                r.cache_read_tokens,
+                r.output_tokens,
+                if r.fallback { ", answered by the fallback model" } else { "" }
+            );
+            if let Some(p) = out {
+                std::fs::write(&p, &r.text)?;
+                eprintln!("Saved {}", p.display());
+            }
+            Ok(())
+        }),
         Cmd::Diag { what: DiagCmd::Live { secs } } => cli::diag_live(secs),
         Cmd::Blackbox { action } => match action {
             BlackboxCmd::Status => cli::blackbox_status(),

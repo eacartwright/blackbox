@@ -59,6 +59,13 @@ pub fn run(stop: Arc<Stop>, system_shutdown: Arc<AtomicBool>, opts: RunOptions) 
     )?;
     for r in &recovered {
         journal.append(RecordType::Recovery, r, true)?;
+        if let Some(e) = &r.error {
+            journal.append(
+                RecordType::CollectorStatus,
+                &rec::CollectorStatus { collector: "journal".into(), level: "error".into(), message: format!("segment {} set aside: {e}", r.segment) },
+                true,
+            )?;
+        }
         if r.truncated_tail_bytes > 0 || r.corrupt_regions > 0 {
             log::warn!(
                 "recovered {}: {} records, {} torn tail bytes dropped, {} corrupt regions skipped",
@@ -78,7 +85,16 @@ pub fn run(stop: Arc<Stop>, system_shutdown: Arc<AtomicBool>, opts: RunOptions) 
         stop_kind: None,
         stop_ft: None,
     };
-    state.save(&paths.run_state())?;
+    if let Err(e) = state.save(&paths.run_state()) {
+        // Without the marker the next boot can't tell clean from unclean,
+        // but recording is worth more than that: keep going.
+        log::error!("cannot write run marker: {e:#}");
+        journal.append(
+            RecordType::CollectorStatus,
+            &rec::CollectorStatus { collector: "agent".into(), level: "error".into(), message: format!("cannot write run marker: {e:#}") },
+            true,
+        )?;
+    }
 
     let ctx = Arc::new(Ctx::new(journal.clone(), cfg, paths.clone(), stop.clone(), boot.boot_id));
 

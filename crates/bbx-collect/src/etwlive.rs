@@ -39,30 +39,30 @@ pub const LIVE_SESSION: &str = "BlackBox-Live";
 
 #[link(name = "advapi32", kind = "raw-dylib")]
 extern "system" {
-    fn OpenTraceW(logfile: *mut EVENT_TRACE_LOGFILEW) -> u64;
-    fn ProcessTrace(handles: *const u64, count: u32, start: *const c_void, end: *const c_void) -> u32;
-    fn CloseTrace(handle: u64) -> u32;
+    pub(crate) fn OpenTraceW(logfile: *mut EVENT_TRACE_LOGFILEW) -> u64;
+    pub(crate) fn ProcessTrace(handles: *const u64, count: u32, start: *const c_void, end: *const c_void) -> u32;
+    pub(crate) fn CloseTrace(handle: u64) -> u32;
 }
 
 const EVENT_TRACE_REAL_TIME_MODE: u32 = 0x0000_0100;
 const PROCESS_TRACE_MODE_REAL_TIME: u32 = 0x0000_0100;
-const PROCESS_TRACE_MODE_EVENT_RECORD: u32 = 0x1000_0000;
-const INVALID_PROCESSTRACE_HANDLE: u64 = u64::MAX;
+pub(crate) const PROCESS_TRACE_MODE_EVENT_RECORD: u32 = 0x1000_0000;
+pub(crate) const INVALID_PROCESSTRACE_HANDLE: u64 = u64::MAX;
 
 const LIVE_FLAGS: u32 = F_PROCESS | F_THREAD | F_IMAGE_LOAD | F_DISK_IO | F_DISK_FILE_IO | F_NETWORK_TCPIP | F_REGISTRY | F_FILE_IO_INIT;
 const LIVE_GUID: Guid = Guid { d1: 0xB1AC_B0C5, d2: 0x5E55, d3: 0x4B1D, d4: [0x9A, 0x7E, 0x0B, 0x1A, 0xC4, 0xB0, 0x00, 0x02] };
 const DNS_CLIENT: Guid = Guid { d1: 0x1C95126E, d2: 0x7EEA, d3: 0x49A9, d4: [0xA3, 0xFE, 0xA3, 0x78, 0xB0, 0x3D, 0xDB, 0x4D] };
 
 // Classic kernel event classes (EventHeader.ProviderId) and DNS-Client.
-const G_PROCESS: u128 = 0x3d6fa8d0_fe05_11d0_9dda_00c04fd7ba7c;
-const G_THREAD: u128 = 0x3d6fa8d1_fe05_11d0_9dda_00c04fd7ba7c;
-const G_DISKIO: u128 = 0x3d6fa8d4_fe05_11d0_9dda_00c04fd7ba7c;
-const G_IMAGE: u128 = 0x2cb15d1d_5fc1_11d2_abe1_00a0c911f518;
-const G_FILEIO: u128 = 0x90cbdc39_4a3e_11d1_84f4_0000f80464e3;
-const G_TCPIP: u128 = 0x9a280ac0_c8e0_11d1_84e2_00c04fb998a2;
-const G_UDPIP: u128 = 0xbf3a50c5_a9c9_4988_a005_2df0b7c80f80;
-const G_REGISTRY: u128 = 0xae53722e_c863_11d2_8659_00c04fa321a1;
-const G_DNS: u128 = 0x1c95126e_7eea_49a9_a3fe_a378b03ddb4d;
+pub(crate) const G_PROCESS: u128 = 0x3d6fa8d0_fe05_11d0_9dda_00c04fd7ba7c;
+pub(crate) const G_THREAD: u128 = 0x3d6fa8d1_fe05_11d0_9dda_00c04fd7ba7c;
+pub(crate) const G_DISKIO: u128 = 0x3d6fa8d4_fe05_11d0_9dda_00c04fd7ba7c;
+pub(crate) const G_IMAGE: u128 = 0x2cb15d1d_5fc1_11d2_abe1_00a0c911f518;
+pub(crate) const G_FILEIO: u128 = 0x90cbdc39_4a3e_11d1_84f4_0000f80464e3;
+pub(crate) const G_TCPIP: u128 = 0x9a280ac0_c8e0_11d1_84e2_00c04fb998a2;
+pub(crate) const G_UDPIP: u128 = 0xbf3a50c5_a9c9_4988_a005_2df0b7c80f80;
+pub(crate) const G_REGISTRY: u128 = 0xae53722e_c863_11d2_8659_00c04fa321a1;
+pub(crate) const G_DNS: u128 = 0x1c95126e_7eea_49a9_a3fe_a378b03ddb4d;
 
 const WINDOW: Duration = Duration::from_secs(10);
 const MAX_MAP: usize = 200_000;
@@ -229,7 +229,7 @@ struct LiveState<'a> {
     decoded: u64,
 }
 
-fn qpc_freq() -> f64 {
+pub(crate) fn qpc_freq() -> f64 {
     let mut f = 0i64;
     unsafe { windows_sys::Win32::System::Performance::QueryPerformanceFrequency(&mut f) };
     if f > 0 { f as f64 } else { 10_000_000.0 }

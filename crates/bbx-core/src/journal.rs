@@ -86,7 +86,15 @@ pub struct RecoveryInfo {
     pub corrupt_regions: usize,
     pub last_seq: Option<u64>,
     pub last_ft: Option<i64>,
+    /// Set when the segment could not be read or sealed. It is left in
+    /// place (renamed `.unreadable` when possible) and recording continues.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
+
+/// Sequence numbers skipped past a segment that couldn't be read, so new
+/// records can never collide with (or be confused with) the ones it holds.
+pub const UNREADABLE_SEQ_GAP: u64 = 10_000_000;
 
 // ---------------------------------------------------------------- framing
 
@@ -391,6 +399,24 @@ pub fn prune(dir: &Path, max_bytes: u64, min_ft: Option<i64>) -> Result<u64> {
     Ok(freed)
 }
 
+/// Rename a problem segment out of the way (best effort) and describe it.
+fn set_aside(path: &Path, error: String) -> RecoveryInfo {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let aside = path.with_file_name(format!("{name}.unreadable"));
+    let renamed = fs::rename(path, &aside).is_ok();
+    log::warn!("journal segment {name} set aside ({error}){}", if renamed { "" } else { "; could not rename it" });
+    RecoveryInfo {
+        segment: if renamed { format!("{name}.unreadable") } else { name },
+        records: 0,
+        truncated_tail_bytes: 0,
+        corrupt_middle_bytes: 0,
+        corrupt_regions: 0,
+        last_seq: None,
+        last_ft: None,
+        error: Some(error),
+    }
+}
+
 // ---------------------------------------------------------------- writer
 
 struct Inner {
@@ -437,7 +463,17 @@ impl JournalWriter {
                 fs::remove_file(&s.path).ok();
                 continue;
             }
-            let bytes = read_shared(&s.path)?;
+            // A segment we cannot read or seal must not stop recording: set it
+            // aside, note it, and move on. (Seen in the field: a segment whose
+            // permissions were broken by an earlier installer.)
+            let bytes = match read_shared(&s.path) {
+                Ok(b) => b,
+                Err(e) => {
+                    recovered.push(set_aside(&s.path, format!("{e:#}")));
+                    max_seq = max_seq.max(s.first_seq + UNREADABLE_SEQ_GAP);
+                    continue;
+                }
+            };
             let scan = scan(&bytes);
             let info = RecoveryInfo {
                 segment: s.path.file_name().unwrap().to_string_lossy().into_owned(),
@@ -447,12 +483,22 @@ impl JournalWriter {
                 corrupt_regions: scan.corrupt_regions,
                 last_seq: scan.records.last().map(|r| r.seq),
                 last_ft: scan.records.last().map(|r| r.ft),
+                error: None,
             };
             if let Some(l) = info.last_seq {
                 max_seq = max_seq.max(l);
             }
-            seal_segment(&s.path, opts.zstd_level)?;
-            recovered.push(info);
+            match seal_segment(&s.path, opts.zstd_level) {
+                Ok(_) => recovered.push(info),
+                Err(e) => {
+                    let mut aside = set_aside(&s.path, format!("sealing failed: {e:#}"));
+                    aside.records = info.records;
+                    aside.last_seq = info.last_seq;
+                    aside.last_ft = info.last_ft;
+                    recovered.push(aside);
+                    max_seq = max_seq.max(s.first_seq + UNREADABLE_SEQ_GAP);
+                }
+            }
         }
 
         // 3. Start a fresh segment.

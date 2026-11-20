@@ -202,3 +202,22 @@ fn prune_respects_budget() {
     let seqs = all_seqs(d.path());
     assert!(seqs[0] > 1 && *seqs.last().unwrap() == 300);
 }
+
+#[test]
+fn unreadable_segment_is_set_aside_and_recording_continues() {
+    let d = tempfile::tempdir().unwrap();
+    write_n(d.path(), 5, JournalOptions::default());
+    // Recover the 5 records, then leave a segment that can't be opened.
+    drop(JournalWriter::open(d.path(), JournalOptions::default()).unwrap());
+    std::fs::create_dir(d.path().join("open-000000000009.bbj")).unwrap();
+
+    let (w, rec) = JournalWriter::open(d.path(), JournalOptions::default()).unwrap();
+    let bad = rec.iter().find(|r| r.error.is_some()).expect("problem segment reported");
+    assert!(bad.segment.starts_with("open-000000000009.bbj"));
+    assert!(w.next_seq() > 9 + journal::UNREADABLE_SEQ_GAP - 1, "sequence jumps past the unreadable segment");
+    w.append(RecordType::Note, &note(1), true).unwrap();
+    drop(w);
+    let seqs = all_seqs(d.path());
+    assert_eq!(&seqs[..5], &[1, 2, 3, 4, 5]);
+    assert!(*seqs.last().unwrap() > journal::UNREADABLE_SEQ_GAP);
+}

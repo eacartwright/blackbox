@@ -57,7 +57,13 @@ pub fn run_console(verbose: bool, for_secs: Option<u64>) -> Result<()> {
 
 pub fn status() -> Result<()> {
     println!("BlackBox {}", bbx_core::VERSION);
-    println!("  Service:        {}", service_state());
+    let svc = service_state();
+    println!("  Service:        {svc}");
+    if !svc.starts_with("Running") {
+        if let Some((ft, msg)) = crate::service::last_reported_error() {
+            println!("                  last startup error ({}): {msg}", fmt_local(ft));
+        }
+    }
     let bb = match blackbox::query() {
         Ok(i) if i.running => format!("recording ({} buffers written, {} lost)", i.buffers_written, i.events_lost + i.log_buffers_lost),
         Ok(_) => "NOT running".into(),

@@ -169,6 +169,10 @@ impl PropsBuf {
     pub(crate) fn props(&mut self) -> &mut EventTraceProperties {
         unsafe { &mut *(self.0.as_mut_ptr() as *mut EventTraceProperties) }
     }
+    #[cfg(test)]
+    pub(crate) fn set_file_pub(&mut self, path: &Path) {
+        self.set_file(path)
+    }
     fn set_file(&mut self, path: &Path) {
         let w = wide_path(path);
         let off = self.props().log_file_name_offset as usize;

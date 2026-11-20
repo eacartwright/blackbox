@@ -61,7 +61,7 @@ pub fn export(paths: &Paths, o: ExportOptions) -> Result<PathBuf> {
     zip.start_file("records.jsonl", big)?;
     journal::for_each_record(&paths.journal(), Some(o.from_ft), Some(o.to_ft), |r| {
         *counts.entry(type_name(r.rtype)).or_default() += 1;
-        let line = serde_json::json!({"seq": r.seq, "time": fmt_utc(r.ft), "type": type_name(r.rtype), "data": r.json()});
+        let line = serde_json::json!({"seq": r.seq, "ft": r.ft, "time": fmt_utc(r.ft), "type": type_name(r.rtype), "data": r.json()});
         let _ = writeln!(zip, "{line}");
         true
     })?;

@@ -3,7 +3,7 @@
 //! and export, and (phase 4) the input digest for AI analysis.
 
 use anyhow::Result;
-use bbx_core::journal;
+use crate::dataset::Rec;
 use bbx_core::paths::Paths;
 use bbx_core::records::{self as rec, RecordType};
 use bbx_core::time::{fmt_local, FT_PER_SEC};
@@ -45,10 +45,10 @@ struct Collected {
     crashes: Vec<(i64, rec::ProcessEnd)>,
 }
 
-fn collect(paths: &Paths, from: i64, to: i64) -> Result<Collected> {
+fn collect(recs: &[Rec]) -> Collected {
     let mut c = Collected::default();
-    journal::for_each_record(&paths.journal(), Some(from), Some(to), |r| {
-        let Some(ty) = r.record_type() else { return true };
+    for r in recs {
+        let Some(ty) = r.ty() else { continue };
         match ty {
             RecordType::Heartbeat => {
                 if let Some(h) = r.parse() {
@@ -143,7 +143,7 @@ fn collect(paths: &Paths, from: i64, to: i64) -> Result<Collected> {
                 }
             }
             RecordType::SessionStart | RecordType::SessionEnd | RecordType::Note | RecordType::ShutdownVerdict => {
-                c.notable.push((r.ft, format!("{:<14} {}", ty.name(), short(&r.json().to_string(), 160))));
+                c.notable.push((r.ft, format!("{:<14} {}", ty.name(), short(&r.data.to_string(), 160))));
             }
             RecordType::CollectorStatus => {
                 if let Some(s) = r.parse::<rec::CollectorStatus>() {
@@ -207,9 +207,8 @@ fn collect(paths: &Paths, from: i64, to: i64) -> Result<Collected> {
             }
             _ => {}
         }
-        true
-    })?;
-    Ok(c)
+    }
+    c
 }
 
 /// Known NTSTATUS exit codes worth naming.
@@ -234,10 +233,21 @@ pub fn exit_code(c: i32) -> String {
     if u >= 0x1000 { format!("0x{u:08X}{name}") } else { format!("{c}") }
 }
 
+/// Report from this machine's journal.
 pub fn around(paths: &Paths, t: i64, before_min: u64, after_min: u64) -> Result<String> {
     let from = t - before_min as i64 * 60 * FT_PER_SEC;
     let to = t + after_min as i64 * 60 * FT_PER_SEC;
-    let c = collect(paths, from, to)?;
+    let recs = crate::dataset::load_journal(paths, from, to)?;
+    around_records(&recs, t, before_min, after_min)
+}
+
+/// Report from already-loaded records (a bundle or dataset).
+pub fn around_records(all: &[Rec], t: i64, before_min: u64, after_min: u64) -> Result<String> {
+    let from = t - before_min as i64 * 60 * FT_PER_SEC;
+    let to = t + after_min as i64 * 60 * FT_PER_SEC;
+    let a = all.partition_point(|r| r.ft < from);
+    let b = all.partition_point(|r| r.ft <= to);
+    let c = collect(&all[a..b.max(a)]);
     let mut o = String::new();
     writeln!(o, "What was happening around {}  (window {} .. {})\n", fmt_local(t), fmt_local(from), fmt_local(to))?;
     if c.beats.is_empty() {

@@ -121,7 +121,15 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     //    drop marker files into triggers\.
     paths.ensure()?;
     let root = paths.root.display().to_string();
-    run("icacls", &[&root, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/T", "/Q"]);
+    run("icacls", &[&root, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/Q"]);
+    let children = format!("{root}\\*");
+    if !run("icacls", &[&children, "/reset", "/T", "/C", "/Q"]) {
+        // Files with a broken ACL can't be reset until Administrators own them.
+        run("takeown", &["/F", &root, "/R", "/A", "/D", "Y"]);
+        if !run("icacls", &[&children, "/reset", "/T", "/C", "/Q"]) {
+            eprintln!("  ! some files under {root} could not be reset; see the messages above");
+        }
+    }
     // Users: create files in triggers\ (and only touch their own), read public\.
     run("icacls", &[&paths.triggers().display().to_string(), "/grant", "*S-1-5-32-545:(WD,AD,S)", "*S-1-3-0:(OI)(CI)(IO)M", "/Q"]);
     run("icacls", &[&paths.public().display().to_string(), "/grant", "*S-1-5-32-545:(OI)(CI)RX", "/Q"]);

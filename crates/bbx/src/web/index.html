@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlackBox Viewer</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --muted: #667085; --line: #e3e6ec; --soft: #eef1f5;
+  --accent: #2f6fde; --warn: #c98a00; --err: #d23b3b; --crit: #8b2fc9; --ok: #1f9d55;
+  --c1: #2f6fde; --c2: #8b2fc9; --c3: #1f9d55; --c4: #d23b3b; --c5: #c98a00; --c6: #0f8fa3; --c7: #6b7280;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #11141a; --panel: #181c24; --ink: #e6e9ef; --muted: #98a2b3; --line: #2a303b; --soft: #202632;
+    --accent: #6ea0ff; --warn: #e7b23a; --err: #ff6b6b; --crit: #c88cff; --ok: #4cc38a;
+    --c1: #6ea0ff; --c2: #c88cff; --c3: #4cc38a; --c4: #ff6b6b; --c5: #e7b23a; --c6: #3cc2d6; --c7: #98a2b3; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 "Segoe UI", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 14px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.brand { font-weight: 700; font-size: 15px; letter-spacing: .3px; }
+#meta { color: var(--muted); }
+.badge { padding: 2px 8px; border-radius: 10px; font-weight: 600; font-size: 12px; background: var(--soft); }
+.badge.bad { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+.controls { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+button, select, input[type=text], input[type=number] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
+button { cursor: pointer; } button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#clock { font-family: var(--mono); min-width: 190px; text-align: right; }
+main { display: flex; height: calc(100% - 46px); }
+aside { width: 330px; min-width: 260px; border-right: 1px solid var(--line); overflow: auto; background: var(--panel); }
+aside h2 { margin: 10px 12px 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+.sus { margin: 6px 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.sus:hover { border-color: var(--accent); }
+.sus .row { display: flex; gap: 8px; align-items: baseline; }
+.sus .score { font-weight: 700; font-family: var(--mono); min-width: 24px; }
+.sus .title { font-weight: 600; }
+.sus .cat { margin-left: auto; color: var(--muted); font-size: 11px; }
+.sus .detail { color: var(--muted); margin-top: 4px; }
+.sus ul { margin: 4px 0 0; padding-left: 16px; font-family: var(--mono); font-size: 11.5px; }
+.bar { height: 3px; background: var(--soft); border-radius: 2px; margin-top: 6px; }
+.bar > div { height: 3px; border-radius: 2px; }
+#center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#chartwrap { position: relative; background: var(--panel); border-bottom: 1px solid var(--line); }
+#chart { display: block; width: 100%; cursor: crosshair; }
+#tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; max-width: 460px; box-shadow: 0 4px 14px rgba(0,0,0,.15); display: none; white-space: pre-wrap; z-index: 5; }
+nav { display: flex; gap: 2px; padding: 6px 10px 0; background: var(--bg); }
+nav button { border-radius: 6px 6px 0 0; border-bottom: none; background: var(--soft); }
+nav button.on { background: var(--panel); font-weight: 600; }
+#panel { flex: 1; overflow: auto; background: var(--panel); padding: 10px 14px; border-top: 1px solid var(--line); }
+table { border-collapse: collapse; width: 100%; font-size: 12px; }
+th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+td.n { text-align: right; font-family: var(--mono); }
+td.m, .m { font-family: var(--mono); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 14px; }
+.card h3 { margin: 4px 0 6px; font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: .5px; }
+.sev0 { color: var(--muted); } .sev1 { color: var(--warn); } .sev2 { color: var(--err); } .sev3 { color: var(--crit); font-weight: 600; }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.toolbar label { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); }
+pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; margin: 0; }
+.md h2 { font-size: 15px; margin: 14px 0 6px; } .md h3 { font-size: 13px; margin: 12px 0 4px; }
+.md p { margin: 6px 0; } .md code { font-family: var(--mono); background: var(--soft); padding: 0 3px; border-radius: 3px; }
+.md pre { background: var(--soft); padding: 8px; border-radius: 6px; }
+.note { color: var(--muted); margin: 6px 0; }
+.screens { display: flex; gap: 8px; flex-wrap: wrap; }
+.screens figure { margin: 0; cursor: pointer; border: 2px solid transparent; border-radius: 6px; }
+.screens figure.near { border-color: var(--accent); }
+.screens img { width: 240px; display: block; border-radius: 4px; }
+.screens figcaption { font-family: var(--mono); font-size: 11px; color: var(--muted); text-align: center; }
+#big { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; margin-top: 8px; }
+.empty { color: var(--muted); padding: 20px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">BlackBox</div>
+  <div id="meta">Loading…</div>
+  <div id="verdict" class="badge" hidden></div>
+  <div class="controls">
+    <button id="play" title="Play from the playhead">▶ Play</button>
+    <select id="speed" title="Playback speed"><option value="1">1×</option><option value="10" selected>10×</option><option value="60">60×</option><option value="300">300×</option></select>
+    <button id="full" title="Show the whole recording">Full range</button>
+    <span id="clock"></span>
+  </div>
+</header>
+<main>
+  <aside><h2>Suspects</h2><div id="suspects"><div class="empty">…</div></div></aside>
+  <section id="center">
+    <div id="chartwrap"><canvas id="chart"></canvas><div id="tip"></div></div>
+    <nav id="tabs"></nav>
+    <div id="panel"></div>
+  </section>
+</main>
+<script>
+"use strict";
+const K = new URLSearchParams(location.search).get("k") || "";
+const api = (p, opt) => fetch(p + (p.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(K), opt).then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return (r.headers.get("content-type") || "").includes("json") ? r.json() : r.text(); });
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const pad = (n, w = 2) => String(n).padStart(w, "0");
+const fmtT = (ms, withMs) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` + (withMs ? "." + pad(d.getMilliseconds(), 3) : ""); };
+const fmtD = ms => { const d = new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${fmtT(ms)}`; };
+const num = (v, d = 0) => v == null || Number.isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+
+let INFO = null, SERIES = null, EVENTS = [], SUSPECTS = [];
+let view = { from: 0, to: 1 }, playhead = 0, playing = null, tab = "moment";
+const LANES = [["incident", "Incidents"], ["event", "Event logs"], ["user", "User session"], ["process", "Processes"], ["device", "Devices"], ["system", "BlackBox"]];
+const PANELS = [
+  { key: "cpu", label: "CPU %", src: "hb", max: 100, color: "--c1" },
+  { key: "commit", label: "Commit %", src: "hb", max: 100, color: "--c2" },
+  { key: "avail", label: "Free RAM MB", src: "hb", color: "--c3" },
+  { key: "disk", label: "Disk latency ms", src: "hb", log: true, color: "--c4" },
+  { key: "rx", label: "Network in KB/s", src: "pdh", color: "--c6", extra: "tx" },
+  { key: "gpu", label: "GPU %", src: "pdh", max: 100, color: "--c5" },
+  { key: "late", label: "Heartbeat late ms", src: "hb", log: true, color: "--c7" },
+];
+const PANEL_H = 46, LANE_H = 16, AXIS_H = 18, LEFT = 128;
+
+// ------------------------------------------------------------ chart
+const cv = $("chart"), ctx = cv.getContext("2d");
+function layout() {
+  const h = PANELS.length * PANEL_H + LANES.length * LANE_H + AXIS_H + 6;
+  cv.style.height = h + "px";
+  cv.width = cv.clientWidth * devicePixelRatio; cv.height = h * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  draw();
+}
+const W = () => cv.clientWidth;
+const xOf = t => LEFT + (t - view.from) / (view.to - view.from) * (W() - LEFT - 8);
+const tOf = x => view.from + (x - LEFT) / (W() - LEFT - 8) * (view.to - view.from);
+const sevColor = s => [css("--muted"), css("--warn"), css("--err"), css("--crit")][s] || css("--muted");
+
+function bisect(arr, t) { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < t) lo = m + 1; else hi = m; } return lo; }
+
+function drawSeries(p, y0) {
+  const s = SERIES[p.src]; if (!s || !s.t.length) return;
+  const ts = s.t, vs = s[p.key];
+  const a = Math.max(0, bisect(ts, view.from) - 1), b = Math.min(ts.length, bisect(ts, view.to) + 1);
+  let max = p.max || 1;
+  if (!p.max) for (let i = a; i < b; i++) { const v = vs[i]; if (v != null && v > max) max = v; if (p.extra) { const e = s[p.extra][i]; if (e > max) max = e; } }
+  const scale = v => p.log ? Math.log10(1 + Math.max(0, v)) / Math.log10(1 + max) : Math.max(0, v) / max;
+  const plot = (vals, color, fill) => {
+    ctx.beginPath(); let started = false;
+    for (let i = a; i < b; i++) {
+      const v = vals[i]; if (v == null) { started = false; continue; }
+      const x = xOf(ts[i]), y = y0 + PANEL_H - 4 - scale(v) * (PANEL_H - 10);
+      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = color; ctx.lineWidth = 1.3; ctx.stroke();
+    if (fill) { ctx.lineTo(xOf(ts[b - 1] ?? view.to), y0 + PANEL_H - 4); ctx.lineTo(xOf(ts[a] ?? view.from), y0 + PANEL_H - 4); ctx.closePath(); ctx.globalAlpha = .12; ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha = 1; }
+  };
+  if (p.extra) plot(s[p.extra], css("--c7"), false);
+  plot(vs, css(p.color), true);
+  ctx.fillStyle = css("--muted"); ctx.font = "10px Segoe UI"; ctx.textAlign = "right";
+  ctx.fillText(num(max), LEFT - 6, y0 + 12);
+}
+
+function draw() {
+  if (!SERIES) return;
+  const w = W(), H = cv.clientHeight;
+  ctx.clearRect(0, 0, w, H);
+  ctx.font = "11px Segoe UI";
+  let y = 2;
+  for (const p of PANELS) {
+    ctx.fillStyle = css("--soft"); ctx.fillRect(LEFT, y, w - LEFT - 8, PANEL_H - 2);
+    ctx.fillStyle = css("--ink"); ctx.textAlign = "left"; ctx.fillText(p.label, 8, y + 26);
+    drawSeries(p, y);
+    p.y = y; y += PANEL_H;
+  }
+  for (const [lane, label] of LANES) {
+    ctx.fillStyle = css("--ink"); ctx.textAlign = "left"; ctx.fillText(label, 8, y + 12);
+    ctx.strokeStyle = css("--line"); ctx.beginPath(); ctx.moveTo(LEFT, y + LANE_H - .5); ctx.lineTo(w - 8, y + LANE_H - .5); ctx.stroke();
+    for (const e of EVENTS) {
+      if (e.lane !== lane || e.t < view.from || e.t > view.to) continue;
+      const x = xOf(e.t); ctx.fillStyle = sevColor(e.sev);
+      if (lane === "incident") { ctx.beginPath(); ctx.moveTo(x, y + 2); ctx.lineTo(x + 5, y + 8); ctx.lineTo(x, y + 14); ctx.lineTo(x - 5, y + 8); ctx.fill(); }
+      else ctx.fillRect(x - 1, y + 3 + (e.sev ? 0 : 3), e.sev ? 3 : 2, e.sev ? 10 : 6);
+    }
+    y += LANE_H;
+  }
+  // time axis
+  ctx.fillStyle = css("--muted"); ctx.textAlign = "center";
+  const span = view.to - view.from, steps = [1e3, 5e3, 1e4, 3e4, 6e4, 3e5, 6e5, 18e5, 36e5, 216e5];
+  const step = steps.find(s => span / s < (w - LEFT) / 90) || 864e5;
+  for (let t = Math.ceil(view.from / step) * step; t <= view.to; t += step) {
+    const x = xOf(t); ctx.fillText(fmtT(t), x, y + 13);
+    ctx.strokeStyle = css("--line"); ctx.globalAlpha = .6; ctx.beginPath(); ctx.moveTo(x, 2); ctx.lineTo(x, y); ctx.stroke(); ctx.globalAlpha = 1;
+  }
+  // moment of interest + playhead
+  if (INFO && INFO.at >= view.from && INFO.at <= view.to) { const x = xOf(INFO.at); ctx.strokeStyle = css("--crit"); ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(x, 2); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]); }
+  if (playhead >= view.from && playhead <= view.to) { const x = xOf(playhead); ctx.strokeStyle = css("--accent"); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, y); ctx.stroke(); ctx.lineWidth = 1; }
+  if (drag && Math.abs(drag.x1 - drag.x0) > 3) { ctx.fillStyle = css("--accent"); ctx.globalAlpha = .12; ctx.fillRect(Math.min(drag.x0, drag.x1), 0, Math.abs(drag.x1 - drag.x0), y); ctx.globalAlpha = 1; }
+  $("clock").textContent = playhead ? fmtD(playhead) : "";
+}
+
+function valueAt(src, key, t) { const s = SERIES[src]; if (!s || !s.t.length) return null; const i = Math.min(s.t.length - 1, bisect(s.t, t)); return s[key][i]; }
+function markerAt(x, y) {
+  let ly = PANELS.length * PANEL_H + 2;
+  for (const [lane] of LANES) {
+    if (y >= ly && y < ly + LANE_H) {
+      let best = null, bd = 6;
+      for (const e of EVENTS) { if (e.lane !== lane) continue; const d = Math.abs(xOf(e.t) - x); if (d < bd) { bd = d; best = e; } }
+      return best;
+    }
+    ly += LANE_H;
+  }
+  return null;
+}
+
+let drag = null;
+cv.addEventListener("mousedown", e => { drag = { x0: e.offsetX, x1: e.offsetX }; });
+cv.addEventListener("mousemove", e => {
+  const tip = $("tip");
+  if (drag) { drag.x1 = e.offsetX; draw(); tip.style.display = "none"; return; }
+  if (e.offsetX < LEFT) { tip.style.display = "none"; return; }
+  const t = tOf(e.offsetX), m = markerAt(e.offsetX, e.offsetY);
+  let text;
+  if (m) text = `${fmtT(m.t, true)}  ${m.title}\n${m.detail || ""}`;
+  else text = `${fmtT(t)}\nCPU ${num(valueAt("hb", "cpu", t))}%   commit ${num(valueAt("hb", "commit", t))}%   free ${num(valueAt("hb", "avail", t))} MB\ndisk ${num(valueAt("hb", "disk", t), 1)} ms   net in ${num(valueAt("pdh", "rx", t))} KB/s   GPU ${num(valueAt("pdh", "gpu", t))}%`;
+  tip.textContent = text; tip.style.display = "block";
+  tip.style.left = Math.min(e.offsetX + 14, W() - 470) + "px"; tip.style.top = (e.offsetY + 14) + "px";
+});
+cv.addEventListener("mouseleave", () => { $("tip").style.display = "none"; });
+window.addEventListener("mouseup", e => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (Math.abs(d.x1 - d.x0) > 6) { const a = tOf(Math.min(d.x0, d.x1)), b = tOf(Math.max(d.x0, d.x1)); setView(a, b); }
+  else if (d.x0 > LEFT) { const m = markerAt(d.x0, e.offsetY); setPlayhead(m ? m.t : tOf(d.x0)); }
+  draw();
+});
+cv.addEventListener("wheel", e => {
+  e.preventDefault(); const t = tOf(e.offsetX), f = e.deltaY > 0 ? 1.4 : 1 / 1.4;
+  setView(t - (t - view.from) * f, t + (view.to - t) * f);
+}, { passive: false });
+cv.addEventListener("dblclick", () => setView(INFO.from, INFO.to));
+
+function setView(a, b) {
+  a = Math.max(INFO.from - 60e3, a); b = Math.min(INFO.to + 60e3, b);
+  if (b - a < 2000) { const c = (a + b) / 2; a = c - 1000; b = c + 1000; }
+  view = { from: a, to: b }; draw();
+}
+let momentTimer = null;
+function setPlayhead(t, quiet) {
+  playhead = t; draw();
+  clearTimeout(momentTimer);
+  momentTimer = setTimeout(() => { if (["moment", "screens"].includes(tab)) renderTab(); }, quiet ? 600 : 50);
+}
+
+$("full").onclick = () => setView(INFO.from, INFO.to);
+$("play").onclick = () => {
+  if (playing) { clearInterval(playing); playing = null; $("play").textContent = "▶ Play"; return; }
+  if (!playhead || playhead >= view.to) playhead = view.from;
+  $("play").textContent = "❚❚ Pause";
+  playing = setInterval(() => {
+    const step = 200 * Number($("speed").value);
+    let t = playhead + step;
+    if (t > INFO.to) { clearInterval(playing); playing = null; $("play").textContent = "▶ Play"; t = INFO.to; }
+    if (t > view.to) { const w = view.to - view.from; view = { from: t - w * .1, to: t + w * .9 }; }
+    setPlayhead(t, true);
+  }, 200);
+};
+window.addEventListener("resize", layout);
+
+// ------------------------------------------------------------ suspects
+function renderSuspects() {
+  const el = $("suspects");
+  if (!SUSPECTS.length) { el.innerHTML = `<div class="empty">No rule-based suspects: nothing crossed a threshold in this recording.</div>`; return; }
+  el.innerHTML = SUSPECTS.map((s, i) => {
+    const color = s.score >= 80 ? "--err" : s.score >= 60 ? "--warn" : "--muted";
+    return `<div class="sus" data-i="${i}">
+      <div class="row"><span class="score" style="color:var(${color})">${s.score}</span><span class="title">${esc(s.title)}</span><span class="cat">${esc(s.category)}</span></div>
+      <div class="detail">${esc(s.detail)}</div>
+      ${s.evidence.length ? `<ul>${s.evidence.slice(0, 8).map(e => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
+      <div class="bar"><div style="width:${s.score}%;background:var(${color})"></div></div></div>`;
+  }).join("");
+  el.querySelectorAll(".sus").forEach(d => d.onclick = () => {
+    const s = SUSPECTS[+d.dataset.i];
+    if (s.t) { setView(s.t - 120e3, s.t + 60e3); setPlayhead(s.t); selectTab("moment"); }
+  });
+}
+
+// ------------------------------------------------------------ tabs
+const TABS = [["moment", "At this moment"], ["timeline", "Timeline"], ["etl", "Black box"], ["screens", "Screens"], ["ai", "Claude analysis"], ["report", "Report"]];
+function selectTab(t) { tab = t; document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.t === t)); renderTab(); }
+$("tabs").innerHTML = TABS.map(([k, l]) => `<button data-t="${k}">${l}</button>`).join("");
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => selectTab(b.dataset.t));
+
+function table(cols, rows) {
+  if (!rows.length) return `<div class="note">None.</div>`;
+  return `<table><tr>${cols.map(c => `<th>${esc(c[0])}</th>`).join("")}</tr>${rows.map(r => `<tr>${cols.map(c => `<td class="${c[2] || ""}">${esc(c[1](r))}</td>`).join("")}</tr>`).join("")}</table>`;
+}
+
+async function renderMoment(p) {
+  const m = await api(`/api/moment?t=${playhead}&span=5`);
+  const v = m.vitals;
+  const sortBy = (arr, f) => [...arr].sort((a, b) => f(b) - f(a));
+  const pdh = m.pdh || {};
+  p.innerHTML = `
+  <div class="toolbar"><b>${fmtD(m.t)}</b>${v ? `<span>CPU ${num(v.cpu)}% · commit ${num(v.commit)}% · free ${num(v.avail)} MB · disk ${num(v.disk_ms, 1)} ms (queue ${num(v.queue, 1)}) · heartbeat ${num(v.late)} ms late</span>` : `<span class="note">No heartbeat near this moment.</span>`}</div>
+  <div class="grid">
+   <div class="card"><h3>Processes (nearest sample)</h3>${table([["Process", r => r.name], ["PID", r => r.pid, "n"], ["CPU %", r => num(r.cpu, 1), "n"], ["Private MB", r => num(r.private_mb), "n"], ["Working set MB", r => num(r.ws_mb), "n"], ["Handles", r => num(r.handles), "n"], ["I/O KB/s", r => num(r.io_kbs), "n"]], m.procs)}</div>
+   <div class="card"><h3>Events ±5 s</h3>${table([["Time", e => fmtT(e.t, true), "m"], ["What", e => e.title], ["Detail", e => e.detail]], m.events)}</div>
+   <div class="card"><h3>Slowest disk I/O</h3>${table([["Max ms", r => num(r.max_ms, 1), "n"], ["Process", r => `${r.proc}(${r.pid})`], ["File", r => r.file], ["R/W", r => `${r.reads}/${r.writes}`, "n"]], sortBy(m.disk, r => r.max_ms).slice(0, 15))}</div>
+   <div class="card"><h3>Files written / deleted</h3>${table([["Process", r => r.proc], ["Path", r => r.path], ["KB", r => num(r.write_bytes / 1024), "n"], ["New/Del/Ren", r => `${r.creates}/${r.deletes}/${r.renames}`, "n"]], sortBy(m.files, r => r.write_bytes + 4096 * (r.deletes + r.renames)).slice(0, 15))}</div>
+   <div class="card"><h3>Registry writes</h3>${table([["Process", r => r.proc], ["Key", r => r.key + (r.value ? " : " + r.value : "")], ["Set/New/Del", r => `${r.sets}/${r.creates}/${r.deletes}`, "n"]], m.registry.slice(0, 15))}</div>
+   <div class="card"><h3>Network</h3>${table([["Process", r => r.proc], ["Remote", r => `${r.proto} ${r.remote}`], ["Sent KB", r => num(r.sent / 1024), "n"], ["Recv KB", r => num(r.recv / 1024), "n"], ["Retrans", r => r.retrans, "n"]], sortBy(m.net, r => r.sent + r.recv).slice(0, 15))}</div>
+   <div class="card"><h3>DNS</h3>${table([["Process", r => r.proc], ["Name", r => r.name], ["Status", r => r.status ? r.status : "ok"], ["Count", r => r.count, "n"]], m.dns.slice(0, 15))}</div>
+   <div class="card"><h3>Disks · CPU · thermal</h3>${table([["Disk", r => r.disk], ["ms", r => num(r.ms, 1), "n"], ["Queue", r => num(r.queue, 1), "n"], ["MB/s", r => num(r.bps / 1048576, 1), "n"], ["Idle %", r => num(r.idle_pct), "n"]], pdh.disks || [])}
+     ${pdh.cpu ? `<div class="note">CPU utility ${num(pdh.cpu.utility)}%, performance ${num(pdh.cpu.perf)}% of base, DPC ${num(pdh.cpu.dpc_pct, 1)}%, interrupts ${num(pdh.cpu.intr_pct, 1)}%${(pdh.thermal || []).map(z => `; ${esc(z.zone)} ${num(z.celsius)} °C (limit ${num(z.passive_pct)}%)`).join("")}</div>` : ""}</div>
+  </div>`;
+}
+
+function renderTimeline(p) {
+  p.innerHTML = `<div class="toolbar"><input id="tlq" type="text" placeholder="Filter…" style="width:260px">${LANES.map(([k, l]) => `<label><input type="checkbox" data-l="${k}" checked>${l}</label>`).join("")}<label><input type="checkbox" id="tlinfo">include info</label></div><div id="tl"></div>`;
+  const go = () => {
+    const q = $("tlq").value.toLowerCase(), lanes = [...p.querySelectorAll("[data-l]")].filter(c => c.checked).map(c => c.dataset.l), info = $("tlinfo").checked;
+    const rows = EVENTS.filter(e => e.t >= view.from && e.t <= view.to && lanes.includes(e.lane) && (info || e.sev > 0 || e.lane === "incident") && (!q || (e.title + " " + e.detail).toLowerCase().includes(q)));
+    $("tl").innerHTML = rows.length ? `<table><tr><th>Time</th><th>Lane</th><th>What</th><th>Detail</th></tr>${rows.slice(0, 3000).map((e, i) => `<tr data-t="${e.t}" style="cursor:pointer"><td class="m">${fmtT(e.t, true)}</td><td>${esc(e.lane)}</td><td class="sev${e.sev}">${esc(e.title)}</td><td>${esc(e.detail)}</td></tr>`).join("")}</table>${rows.length > 3000 ? `<div class="note">${rows.length - 3000} more; zoom in.</div>` : ""}` : `<div class="note">Nothing in the visible range. Zoom out or include info events.</div>`;
+    $("tl").querySelectorAll("tr[data-t]").forEach(tr => tr.onclick = () => setPlayhead(+tr.dataset.t));
+  };
+  p.querySelectorAll("input").forEach(i => i.oninput = go); go();
+}
+
+function renderEtl(p) {
+  if (!INFO.etl_files) { p.innerHTML = `<div class="empty">This dataset has no black-box files. Export without --no-etl to include them.</div>`; return; }
+  const kinds = ["process", "file", "registry", "network", "disk", "image", "dns", "other"];
+  p.innerHTML = `<div class="toolbar"><span>Window: playhead ±</span><input id="ew" type="number" value="5" min="1" max="150" style="width:64px"><span>s</span>
+    <input id="eq" type="text" placeholder="Filter (process, path, …)" style="width:240px">
+    ${kinds.map(k => `<label><input type="checkbox" data-k="${k}" ${["process", "file", "registry", "network", "disk", "dns"].includes(k) ? "checked" : ""}>${k}</label>`).join("")}
+    <label title="File reads, registry queries/opens, directory listings"><input type="checkbox" id="er">reads</label>
+    <button class="primary" id="eg">Load</button></div><div id="eo"><div class="note">Pick a moment on the chart, then Load. Reads the kernel trace for the window: every process start/exit, file, registry, network and disk operation.</div></div>`;
+  $("eg").onclick = async () => {
+    const w = Math.min(150, Math.max(1, +$("ew").value)) * 1000, ks = [...p.querySelectorAll("[data-k]")].filter(c => c.checked).map(c => c.dataset.k).join(",");
+    $("eo").innerHTML = `<div class="note">Reading black box…</div>`;
+    try {
+      const r = await api(`/api/etl?from=${playhead - w}&to=${playhead + w}&kinds=${ks}&reads=${$("er").checked ? 1 : 0}&q=${encodeURIComponent($("eq").value)}`);
+      if (r.error) { $("eo").innerHTML = `<div class="note">${esc(r.error)}</div>`; return; }
+      const s = r.stats;
+      $("eo").innerHTML = `<div class="note">${num(s.rows)} rows from ${num(s.events)} events in ${s.files} file(s)${s.truncated ? " (truncated at 20,000: narrow the window or filter)" : ""}.</div>` +
+        table([["Time", x => fmtT(x.t, true), "m"], ["Process", x => `${x.proc || "?"}(${x.pid})`], ["Operation", x => x.op], ["Path", x => x.path], ["Detail", x => x.detail]], r.rows.slice(0, 5000));
+    } catch (e) { $("eo").innerHTML = `<div class="note">${esc(e.message)}</div>`; }
+  };
+}
+
+function renderScreens(p) {
+  const sc = INFO.screens;
+  if (!sc.length) { p.innerHTML = `<div class="empty">No screenshots in this dataset (screenshots are off by default; enable "screenshots" in the client's config.json).</div>`; return; }
+  let ni = 0; sc.forEach((t, i) => { if (Math.abs(t - playhead) < Math.abs(sc[ni] - playhead)) ni = i; });
+  p.innerHTML = `<div class="screens">${sc.map((t, i) => `<figure data-i="${i}" class="${i === ni ? "near" : ""}"><img src="/api/screen?i=${i}&k=${encodeURIComponent(K)}" alt=""><figcaption>${fmtT(t)}</figcaption></figure>`).join("")}</div><img id="big" src="/api/screen?i=${ni}&k=${encodeURIComponent(K)}" alt="">`;
+  p.querySelectorAll("figure").forEach(f => f.onclick = () => { $("big").src = `/api/screen?i=${f.dataset.i}&k=${encodeURIComponent(K)}`; setPlayhead(sc[+f.dataset.i]); });
+}
+
+function md(src) {
+  const lines = esc(src).split("\n"); let out = "", list = null, code = false;
+  const inline = s => s.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  const close = () => { if (list) { out += `</${list}>`; list = null; } };
+  for (const l of lines) {
+    if (l.startsWith("```")) { close(); out += code ? "</pre>" : "<pre>"; code = !code; continue; }
+    if (code) { out += l + "\n"; continue; }
+    let m;
+    if ((m = l.match(/^(#{1,4})\s+(.*)/))) { close(); const n = Math.min(4, m[1].length + 1); out += `<h${n}>${inline(m[2])}</h${n}>`; }
+    else if ((m = l.match(/^\s*[-*]\s+(.*)/))) { if (list !== "ul") { close(); out += "<ul>"; list = "ul"; } out += `<li>${inline(m[1])}</li>`; }
+    else if ((m = l.match(/^\s*\d+[.)]\s+(.*)/))) { if (list !== "ol") { close(); out += "<ol>"; list = "ol"; } out += `<li>${inline(m[1])}</li>`; }
+    else if (!l.trim()) close();
+    else { close(); out += `<p>${inline(l)}</p>`; }
+  }
+  close(); if (code) out += "</pre>";
+  return out;
+}
+
+let aiPoll = null;
+async function renderAi(p) {
+  if (!INFO.ai_available) {
+    p.innerHTML = `<div class="md"><h3>Claude analysis is not configured</h3><p>Set <code>ANTHROPIC_API_KEY</code> in the environment of the technician's machine and restart <code>bbx view</code>. You can still download the digest that would be sent and read it yourself.</p><p><a href="/api/digest?k=${encodeURIComponent(K)}" download="blackbox-digest.md">Download digest</a></p></div>`;
+    return;
+  }
+  const job = await api("/api/ai");
+  const running = job.status === "running";
+  p.innerHTML = `<div class="toolbar">
+      <button class="primary" id="ago" ${running ? "disabled" : ""}>${job.status === "done" ? "Analyze again" : "Analyze with Claude"}</button>
+      <input id="aq" type="text" placeholder="Optional question, e.g. why did the screen go black at 16:30?" style="flex:1;min-width:260px">
+      ${job.status === "done" ? `<button id="afu">Ask follow-up</button>` : ""}
+      <a href="/api/digest?k=${encodeURIComponent(K)}" download="blackbox-digest.md">Download digest</a></div>
+    <div class="note">Sends the digest of this recording (machine name, process names, redacted command lines, file paths, event text) to Anthropic's API using model <code>${esc(INFO.model)}</code>. Nothing is sent until you click.</div>
+    <div class="note">${running ? "Analyzing… (this can take a minute or two)" : job.status === "error" ? `<span class="sev2">${esc(job.error)}</span>` : job.result ? `Model ${esc(job.result.model)} · ${num(job.result.input_tokens + job.result.cache_read_tokens + job.result.cache_write_tokens)} input tokens (${num(job.result.cache_read_tokens)} cached) · ${num(job.result.output_tokens)} output tokens${job.result.fallback ? " · answered by the fallback model" : ""}` : ""}</div>
+    ${job.question ? `<div class="note">Question: ${esc(job.question)}</div>` : ""}
+    <div class="md" id="aout">${md(job.text || "")}</div>`;
+  const start = async followup => { await api("/api/ai", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: $("aq").value, followup }) }); renderAi(p); };
+  $("ago").onclick = () => start(false);
+  if ($("afu")) $("afu").onclick = () => start(true);
+  clearTimeout(aiPoll);
+  if (running) aiPoll = setTimeout(() => { if (tab === "ai") renderAi(p); }, 900);
+}
+
+async function renderReport(p) { p.innerHTML = `<pre>${esc(await api(`/api/report?t=${playhead}`))}</pre>`; }
+
+async function renderTab() {
+  const p = $("panel");
+  try {
+    if (tab === "moment") await renderMoment(p);
+    else if (tab === "timeline") renderTimeline(p);
+    else if (tab === "etl") renderEtl(p);
+    else if (tab === "screens") renderScreens(p);
+    else if (tab === "ai") await renderAi(p);
+    else if (tab === "report") await renderReport(p);
+  } catch (e) { p.innerHTML = `<div class="note">${esc(e.message)}</div>`; }
+}
+
+// ------------------------------------------------------------ boot
+(async () => {
+  try {
+    [INFO, SERIES, EVENTS, SUSPECTS] = await Promise.all([api("/api/info"), api("/api/series"), api("/api/events"), api("/api/suspects")]);
+  } catch (e) { $("meta").textContent = "Cannot load data: " + e.message; return; }
+  document.title = `BlackBox · ${INFO.host}`;
+  $("meta").textContent = `${INFO.host} · ${INFO.os} · ${fmtD(INFO.from)} → ${fmtT(INFO.to)}${INFO.incident ? " · " + INFO.incident.kind + ": " + INFO.incident.reason : ""}`;
+  if (INFO.verdict) { const v = $("verdict"); v.hidden = false; v.textContent = "Previous boot: " + INFO.verdict.kind; v.title = INFO.verdict.summary; if (!["CleanShutdown", "FirstRun", "CollectorStopped"].includes(INFO.verdict.kind)) v.classList.add("bad"); }
+  // Fit the data that exists: an incident window can start before
+  // recording did.
+  const hbT = SERIES.hb.t;
+  if (hbT.length) { INFO.from = Math.max(INFO.from, hbT[0] - 30e3); INFO.to = Math.min(INFO.to, hbT[hbT.length - 1] + 30e3); }
+  const w = Math.min(INFO.to - INFO.from, 15 * 60e3);
+  view = { from: Math.max(INFO.from, INFO.at - w * .8), to: Math.min(INFO.to, INFO.at + w * .2) };
+  if (view.to - view.from < 10e3) view = { from: INFO.from, to: INFO.to };
+  playhead = INFO.at;
+  layout(); renderSuspects(); selectTab("moment");
+})();
+</script>
+</body>
+</html>

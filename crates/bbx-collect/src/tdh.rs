@@ -95,6 +95,9 @@ struct Prop {
 #[derive(Debug)]
 pub struct Schema {
     pub event_name: String,
+    pub provider_name: String,
+    pub task_name: String,
+    pub opcode_name: String,
     props: Vec<Prop>,
 }
 
@@ -155,6 +158,11 @@ impl Decoder {
         }
         self.cache.insert(key, s.clone());
         s
+    }
+
+    /// The schema for this event type (names of provider, task, opcode).
+    pub fn schema_of(&mut self, r: &EVENT_RECORD) -> Option<Arc<Schema>> {
+        self.schema(r)
     }
 
     /// Decode properties until all `wanted` names have been seen (or the
@@ -223,7 +231,13 @@ fn load_schema(r: &EVENT_RECORD) -> Option<Schema> {
         }
     }
     let event_name = wstr(rd32(92));
-    Some(Schema { event_name, props })
+    Some(Schema {
+        event_name,
+        provider_name: wstr(rd32(52)),
+        task_name: wstr(rd32(68)).trim().to_string(),
+        opcode_name: wstr(rd32(72)).trim().to_string(),
+        props,
+    })
 }
 
 fn sid_string(b: &[u8]) -> Option<(String, usize)> {
@@ -346,6 +360,9 @@ mod tests {
     fn schema(props: Vec<(&str, u16, u16, u16)>) -> Schema {
         Schema {
             event_name: "T".into(),
+            provider_name: String::new(),
+            task_name: String::new(),
+            opcode_name: String::new(),
             props: props
                 .into_iter()
                 .map(|(n, i, o, l)| Prop { name: Arc::from(n), in_type: i, out_type: o, length: l, flags: 0, len_index: l })
