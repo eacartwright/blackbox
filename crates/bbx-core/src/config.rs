@@ -45,6 +45,29 @@ pub struct Config {
 
     /// Extra regexes to redact from command lines (value replaced by ***).
     pub redact_patterns: Vec<String>,
+
+    /// Disk health (SMART / NVMe log / temperature) sampling interval.
+    pub disk_health_minutes: u64,
+
+    /// User-session agent: keep a ring of low-resolution grayscale
+    /// screenshots in memory and save it only with incidents. Off by default
+    /// (privacy); turn on for machines where users report visual problems.
+    pub screenshots: bool,
+    pub screenshot_interval_s: u64,
+    /// Frames kept in the ring (interval x frames = seconds of history).
+    pub screenshot_frames: usize,
+    pub screenshot_width: u32,
+    /// Seconds a window must be unresponsive before it counts as hung.
+    pub hung_window_s: u64,
+
+    /// Packet capture ring via pktmon (headers only). Off by default.
+    pub packet_capture: bool,
+    pub packet_capture_mb: u64,
+    pub packet_snaplen: u32,
+
+    /// age public keys (age1...). When set, `bbx export` encrypts bundles to
+    /// them and never leaves a plaintext copy.
+    pub export_recipients: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -109,6 +132,16 @@ impl Default for Config {
             ],
             eventlog_backfill_hours: 24,
             redact_patterns: vec![],
+            disk_health_minutes: 60,
+            screenshots: false,
+            screenshot_interval_s: 5,
+            screenshot_frames: 24,
+            screenshot_width: 800,
+            hung_window_s: 5,
+            packet_capture: false,
+            packet_capture_mb: 256,
+            packet_snaplen: 128,
+            export_recipients: vec![],
         }
     }
 }

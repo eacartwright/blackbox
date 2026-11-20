@@ -1,0 +1,18 @@
+[package]
+name = "bbx-agent"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "BlackBox per-user session agent (tray icon, hung windows, display state, screenshots)"
+
+[[bin]]
+name = "bbx-agent"
+path = "src/main.rs"
+
+[dependencies]
+bbx-core.workspace = true
+anyhow.workspace = true
+png.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+windows-sys.workspace = true

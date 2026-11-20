@@ -28,6 +28,9 @@ The design and on-disk formats are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.m
 | As they happen | process start/end with full command line, user and image path (secrets redacted); System, Application and ~15 operational event logs; incidents and notes |
 | Every 10 s (live ETW) | network bytes / connects / retransmits per process and remote address, DNS queries and failures, disk I/O per process and file with worst latency, file writes / creates / deletes / renames, registry writes |
 | Instantly (live ETW) | every process start and exit with **exit code** (even ones that live milliseconds), kernel driver loads |
+| In each user session (tray agent) | hung windows, desktop stalls, **display turning off**, lock/unlock, foreground app, idle/active, Explorer restarts; optional screenshot ring kept only for incidents |
+| Hourly | disk health: NVMe/SATA SMART, temperature, wear, media errors, the drive's own unsafe-shutdown count |
+| On change | AC / battery state |
 | Black box | kernel ETW: process, thread, image load, disk, file and registry I/O, TCP/IP, hard faults, plus Kernel-Power, Kernel-PnP, StorPort, DNS-Client, in rolling `.etl` files (open them with Windows Performance Analyzer) |
 
 ## Build
@@ -53,8 +56,9 @@ From an elevated (Administrator) prompt on the machine to watch:
 bbx install
 ```
 
-This copies `bbx.exe` to `C:\Program Files\BlackBox`, registers the
-`BlackBox` service (automatic start, restarts on failure), stores data under
+This copies `bbx.exe` and `bbx-agent.exe` to `C:\Program Files\BlackBox`,
+registers the `BlackBox` service (automatic start, restarts on failure),
+starts the tray agent at every sign-in, stores data under
 `C:\ProgramData\BlackBox`, and turns on extra Windows evidence:
 
 - the Task Scheduler operational log
@@ -86,9 +90,23 @@ Other commands:
 | `bbx incidents` | List saved incidents (manual marks and automatic detections) |
 | `bbx export --incident <id>` | One .zip with records, report, event logs, black-box files and dumps (`--around 16:30`, `--from/--to`, `--no-etl`) |
 | `bbx diag live` | Elevated: run the live ETW decoder for 15 s and show what it captured |
+| `bbx keygen` | Create a technician key; put its `age1...` public key in client `config.json` as `export_recipients` |
+| `bbx decrypt <bundle.age> -i blackbox-tech.key` | Open an encrypted bundle |
 | `bbx blackbox status` | ETW session state and files |
 | `bbx run --for-secs 60` | Record in the foreground (testing; no black box unless elevated) |
 | `bbx uninstall [--purge]` | Remove the service and black box (and optionally all data) |
+
+Users can also press **Ctrl+Alt+Shift+B**, or right-click the tray icon >
+**It just happened**, the moment something goes wrong.
+
+Optional settings in `C:\ProgramData\BlackBox\config.json` (restart the service after changing):
+
+| Setting | Default | |
+|---|---|---|
+| `screenshots` | `false` | Keep a 2-minute ring of grayscale screenshots in the agent's memory; saved only with incidents |
+| `packet_capture` | `false` | pktmon header capture ring (256 MB), saved as `.pcapng` with incidents |
+| `export_recipients` | `[]` | age public keys; bundles are then always encrypted |
+| `profile` | `standard` | `deep` adds context switches, DPCs, interrupts and CPU sampling to the black box |
 
 For a total freeze where nothing responds, once CrashOnCtrlScroll is enabled
 (it takes effect after the next reboot), hold **Right Ctrl** and press **Scroll
@@ -97,9 +115,10 @@ contains the in-memory ETW buffers.
 
 ## Status
 
-Phases 1 (foundation) and 2 (live ETW, detectors, incidents, export) are
-built and tested. Phases 3–4 (tray agent and hardware health, viewer and AI
-analysis) are described in the architecture doc.
+Phases 1 (foundation), 2 (live ETW, detectors, incidents, export) and 3
+(tray agent, disk and power health, packet ring, encrypted bundles) are
+built and tested. Phase 4 (viewer and AI analysis) is described in the
+architecture doc.
 
 Incidents open automatically for sustained CPU / memory / disk trouble,
 system stalls, display driver resets, WHEA hardware errors, storage resets,

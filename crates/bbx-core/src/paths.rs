@@ -29,13 +29,15 @@ impl Paths {
     pub fn state(&self) -> PathBuf { self.root.join("state") }
     pub fn triggers(&self) -> PathBuf { self.root.join("triggers") }
     pub fn logs(&self) -> PathBuf { self.root.join("logs") }
+    /// Readable by all users: agent settings and the latest incident signal.
+    pub fn public(&self) -> PathBuf { self.root.join("public") }
 
     pub fn run_state(&self) -> PathBuf { self.state().join("run.json") }
     pub fn config(&self) -> PathBuf { self.root.join("config.json") }
     pub fn eventlog_bookmarks(&self) -> PathBuf { self.state().join("eventlog-bookmarks.json") }
 
     pub fn ensure(&self) -> std::io::Result<()> {
-        for d in [self.journal(), self.blackbox(), self.incidents(), self.state(), self.triggers(), self.logs()] {
+        for d in [self.journal(), self.blackbox(), self.incidents(), self.state(), self.triggers(), self.logs(), self.public()] {
             std::fs::create_dir_all(d)?;
         }
         Ok(())

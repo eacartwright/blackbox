@@ -70,6 +70,33 @@ fn first_line(s: &str) -> String {
     if l.chars().count() > 200 { l.chars().take(200).collect::<String>() + "…" } else { l.to_string() }
 }
 
+/// Agent-reported user-session events worth an incident. Returns
+/// (kind, reason, when).
+pub fn match_user_event(e: &bbx_core::records::UserEvent, ft: i64) -> Option<(String, String, i64)> {
+    let who = if e.user.is_empty() { String::new() } else { format!(" ({})", e.user) };
+    match e.kind.as_str() {
+        "hung_end" if e.value >= 15.0 => Some((
+            format!("app_hung:{}", e.proc.to_ascii_lowercase()),
+            format!("{} was not responding for {:.0} s{who}", e.proc, e.value),
+            ft - (e.value * FT_PER_SEC as f64) as i64,
+        )),
+        "ui_stall" if e.value >= 5000.0 => Some((
+            "ui_stall".into(),
+            format!("the desktop froze for {:.1} s{who}", e.value / 1000.0),
+            ft - (e.value * 10_000.0) as i64,
+        )),
+        // The "it just went black" case: the display turned off while
+        // someone was using the machine (not a normal power-saving timeout).
+        "display" if e.detail == "off" && e.value < 30.0 => Some((
+            "display_off_while_active".into(),
+            format!("the display turned off while the user was active (last input {:.0} s earlier){who}", e.value),
+            ft,
+        )),
+        "shell" => Some(("explorer_restarted".into(), format!("Explorer (taskbar/desktop) restarted{who}"), ft)),
+        _ => None,
+    }
+}
+
 /// Device classes whose loss or failure is incident-worthy.
 const CRITICAL_CLASSES: &[&str] = &["DiskDrive", "Display", "SCSIAdapter", "hdc", "Net", "Volume", "USB"];
 
@@ -164,6 +191,67 @@ impl PoolDetector {
     }
 }
 
+/// Disk health changes worth an incident: the drive flags trouble, error
+/// counters rise, or it runs hot.
+#[derive(Default)]
+pub struct DiskHealthDetector {
+    prev: std::collections::HashMap<String, bbx_core::records::DiskHealthRow>,
+}
+
+/// ATA attributes whose raw value going up means damage or a bad cable.
+const ATA_BAD: &[(u8, &str)] = &[
+    (5, "reallocated sectors"),
+    (187, "uncorrectable errors"),
+    (188, "command timeouts"),
+    (197, "pending sectors"),
+    (198, "offline uncorrectable sectors"),
+    (199, "interface CRC errors (cable/port)"),
+];
+
+impl DiskHealthDetector {
+    pub fn on_sample(&mut self, disks: &[bbx_core::records::DiskHealthRow]) -> Vec<Finding> {
+        let mut out = Vec::new();
+        for d in disks {
+            let key = if d.serial.is_empty() { format!("disk{}", d.disk) } else { d.serial.clone() };
+            let label = format!("disk {} ({})", d.disk, d.model);
+            let prev = self.prev.get(&key);
+            if d.predict_failure == Some(true) && prev.and_then(|p| p.predict_failure) != Some(true) {
+                out.push((format!("disk_failure_predicted:{key}"), format!("{label}: SMART predicts failure")));
+            }
+            if let Some(h) = &d.nvme {
+                let pw = prev.and_then(|p| p.nvme.as_ref());
+                if h.critical_warning != 0 && pw.is_none_or(|p| p.critical_warning != h.critical_warning) {
+                    out.push((format!("disk_critical_warning:{key}"), format!("{label}: NVMe critical warning 0x{:02X}", h.critical_warning)));
+                }
+                if let Some(p) = pw {
+                    if h.media_errors > p.media_errors {
+                        out.push((format!("disk_media_errors:{key}"), format!("{label}: {} new media errors", h.media_errors - p.media_errors)));
+                    }
+                }
+            }
+            if let Some(p) = prev {
+                for (id, what) in ATA_BAD {
+                    let now = d.ata.iter().find(|a| a.id == *id).map(|a| a.raw);
+                    let before = p.ata.iter().find(|a| a.id == *id).map(|a| a.raw);
+                    if let (Some(n), Some(b)) = (now, before) {
+                        if n > b {
+                            out.push((format!("disk_smart_{id}:{key}"), format!("{label}: {what} rose from {b} to {n}")));
+                        }
+                    }
+                }
+            }
+            if let Some(t) = d.temp_c {
+                let limit = d.warn_c.filter(|w| *w > 30).unwrap_or(70);
+                if t >= limit {
+                    out.push((format!("disk_hot:{key}"), format!("{label}: {t} C (warning threshold {limit} C)")));
+                }
+            }
+            self.prev.insert(key, d.clone());
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +316,48 @@ mod tests {
         let mut det = VitalsDetector::default();
         let f = det.on_heartbeat(&Vitals { avail_mb: 4000, commit_pct: 40.0, ..Default::default() }, 8000);
         assert_eq!(f[0].0, "system_stall");
+    }
+
+    #[test]
+    fn disk_health() {
+        use bbx_core::records::{AtaAttr, DiskHealthRow, NvmeHealth};
+        let mut det = DiskHealthDetector::default();
+        let sata = |crc: u64| DiskHealthRow {
+            serial: "S1".into(),
+            model: "SSD".into(),
+            temp_c: Some(40),
+            ata: vec![AtaAttr { id: 199, raw: crc, ..Default::default() }],
+            ..Default::default()
+        };
+        assert!(det.on_sample(&[sata(5)]).is_empty(), "first sample is the baseline");
+        assert!(det.on_sample(&[sata(5)]).is_empty());
+        assert!(det.on_sample(&[sata(9)])[0].1.contains("CRC"));
+        let nvme = |w: u8, t: i16| DiskHealthRow {
+            serial: "N1".into(),
+            temp_c: Some(t),
+            warn_c: Some(75),
+            nvme: Some(NvmeHealth { critical_warning: w, ..Default::default() }),
+            ..Default::default()
+        };
+        assert!(det.on_sample(&[nvme(0, 50)]).is_empty());
+        assert_eq!(det.on_sample(&[nvme(4, 50)]).len(), 1);
+        assert!(det.on_sample(&[nvme(4, 50)]).is_empty(), "same warning reported once");
+        assert!(det.on_sample(&[nvme(4, 80)])[0].0.starts_with("disk_hot"));
+    }
+
+    #[test]
+    fn user_events() {
+        use bbx_core::records::UserEvent;
+        let ue = |kind: &str, detail: &str, value: f64| UserEvent { kind: kind.into(), proc: "EXCEL.EXE".into(), detail: detail.into(), value, ..Default::default() };
+        let t = 1_000 * FT_PER_SEC;
+        let (k, _, at) = match_user_event(&ue("hung_end", "", 20.0), t).unwrap();
+        assert_eq!(k, "app_hung:excel.exe");
+        assert_eq!(at, t - 20 * FT_PER_SEC);
+        assert!(match_user_event(&ue("hung_end", "", 6.0), t).is_none(), "short hangs are normal");
+        assert!(match_user_event(&ue("display", "off", 3.0), t).is_some(), "black screen while in use");
+        assert!(match_user_event(&ue("display", "off", 600.0), t).is_none(), "power-saving timeout");
+        assert!(match_user_event(&ue("ui_stall", "", 8000.0), t).is_some());
+        assert!(match_user_event(&ue("foreground", "", 0.0), t).is_none());
     }
 
     #[test]

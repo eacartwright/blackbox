@@ -82,6 +82,7 @@ pub fn run(stop: Arc<Stop>, system_shutdown: Arc<AtomicBool>, opts: RunOptions) 
 
     let ctx = Arc::new(Ctx::new(journal.clone(), cfg, paths.clone(), stop.clone(), boot.boot_id));
 
+    crate::ingest::publish_agent_settings(&ctx);
     let mut threads: Vec<JoinHandle<()>> = vec![
         crate::incidents::spawn(ctx.clone()),
         spawn_heartbeat(ctx.clone()),
@@ -92,6 +93,8 @@ pub fn run(stop: Arc<Stop>, system_shutdown: Arc<AtomicBool>, opts: RunOptions) 
         spawn_supervised(ctx.clone(), "eventlog", eventlog::run),
         spawn_supervised(ctx.clone(), "blackbox", blackbox::run),
         spawn_supervised(ctx.clone(), "etwlive", etwlive::run),
+        spawn_supervised(ctx.clone(), "hardware", bbx_collect::hardware::run),
+        spawn_supervised(ctx.clone(), "pktmon", bbx_collect::pktmon::run),
         spawn_supervised(ctx.clone(), "maintenance", maintenance),
     ];
     {
@@ -288,48 +291,13 @@ fn maintenance(ctx: &Ctx) -> Result<()> {
     util::below_normal_priority();
     let mut last_prune = Instant::now() - Duration::from_secs(3600);
     while !ctx.stop.wait(Duration::from_secs(2)) {
-        for t in take_triggers(ctx) {
-            let reason = if t.is_empty() { "marked by user".to_string() } else { t };
-            ctx.request_incident("manual", reason, now_ft());
-        }
+        crate::ingest::pass(ctx);
         if last_prune.elapsed() >= Duration::from_secs(600) {
             last_prune = Instant::now();
             prune_all(ctx);
         }
     }
     Ok(())
-}
-
-#[derive(serde::Deserialize, Default)]
-struct Trigger {
-    #[serde(default)]
-    note: String,
-    #[serde(default)]
-    user: String,
-}
-
-/// Read and delete marker files dropped into triggers\ (by `bbx mark` or,
-/// later, the tray agent). Untrusted input: size-capped and rate-limited.
-fn take_triggers(ctx: &Ctx) -> Vec<String> {
-    let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(ctx.paths.triggers()) else { return out };
-    for e in rd.flatten().take(10) {
-        let p = e.path();
-        let small = e.metadata().map(|m| m.len() <= 4096).unwrap_or(false);
-        let t: Trigger = if small {
-            std::fs::read(&p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
-        } else {
-            Trigger::default()
-        };
-        std::fs::remove_file(&p).ok();
-        let note: String = t.note.chars().take(500).collect();
-        ctx.emit_critical(
-            RecordType::Note,
-            &rec::Note { text: note.clone(), user: t.user.chars().take(100).collect(), source: "trigger".into() },
-        );
-        out.push(note);
-    }
-    out
 }
 
 fn prune_all(ctx: &Ctx) {

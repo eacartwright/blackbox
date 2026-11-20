@@ -115,6 +115,28 @@ fn collect(paths: &Paths, from: i64, to: i64) -> Result<Collected> {
                     c.notable.push((r.ft, format!("driver load    {}", d.path)));
                 }
             }
+            RecordType::UserEvent => {
+                if let Some(u) = r.parse::<rec::UserEvent>() {
+                    let line = match u.kind.as_str() {
+                        "hung" => format!("user hung      {} stopped responding", u.proc),
+                        "hung_end" => format!("user hung end  {} responding again after {:.0} s", u.proc, u.value),
+                        "ui_stall" => format!("user UI STALL  desktop froze for {:.1} s", u.value / 1000.0),
+                        "display" => format!("user display   {} (last input {:.0} s earlier)", u.detail, u.value),
+                        "foreground" => format!("user switched  to {}", u.proc),
+                        "idle" | "active" => format!("user {}", u.kind),
+                        _ => format!("user {:<9} {} {}", u.kind, u.proc, u.detail),
+                    };
+                    c.notable.push((r.ft, format!("{line}  [{}]", u.user)));
+                }
+            }
+            RecordType::DiskHealth => {}
+            RecordType::Power => {
+                if let Some(p) = r.parse::<rec::Power>() {
+                    let ac = match p.ac { Some(true) => "on AC", Some(false) => "ON BATTERY", None => "power unknown" };
+                    let bat = p.battery_pct.map(|b| format!(", battery {b}%{}", if p.critical { " CRITICAL" } else { "" })).unwrap_or_default();
+                    c.notable.push((r.ft, format!("power          {ac}{bat}")));
+                }
+            }
             RecordType::Incident => {
                 if let Some(i) = r.parse::<rec::Incident>() {
                     c.notable.push((r.ft, format!("INCIDENT       [{}] {}", i.kind, i.reason)));

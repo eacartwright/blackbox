@@ -2,8 +2,10 @@
 
 mod agent;
 mod cli;
+mod crypto;
 mod export;
 mod incidents;
+mod ingest;
 mod install;
 mod report;
 mod service;
@@ -105,6 +107,23 @@ enum Cmd {
         /// Leave out black-box .etl files (much smaller).
         #[arg(long)]
         no_etl: bool,
+        /// Encrypt to this age public key (repeatable). Defaults to
+        /// export_recipients from config.json.
+        #[arg(long = "recipient")]
+        recipients: Vec<String>,
+    },
+    /// Create a technician key pair for encrypted bundles.
+    Keygen {
+        #[arg(short, long, default_value = "blackbox-tech.key")]
+        out: std::path::PathBuf,
+    },
+    /// Decrypt a bundle made with --recipient / export_recipients.
+    Decrypt {
+        file: std::path::PathBuf,
+        #[arg(short, long)]
+        identity: std::path::PathBuf,
+        #[arg(short, long)]
+        out: Option<std::path::PathBuf>,
     },
     /// List saved incidents.
     Incidents,
@@ -157,8 +176,17 @@ fn main() {
         Cmd::LastShutdown => cli::last_shutdown(),
         Cmd::Dump { from, to, types, last, json } => cli::dump(from, to, types, last, json),
         Cmd::Mark { note } => cli::mark(&note.join(" ")),
-        Cmd::Export { incident, around, from, to, minutes, after, out, no_etl } => {
-            cli::export(incident, around, from, to, minutes, after, out, !no_etl)
+        Cmd::Export { incident, around, from, to, minutes, after, out, no_etl, recipients } => {
+            cli::export(incident, around, from, to, minutes, after, out, !no_etl, recipients)
+        }
+        Cmd::Keygen { out } => crypto::keygen(&out).map(|public| {
+            println!("Wrote {} (keep it private).", out.display());
+            println!("Public key, for client config.json \"export_recipients\" or --recipient:");
+            println!("  {public}");
+        }),
+        Cmd::Decrypt { file, identity, out } => {
+            let out = out.unwrap_or_else(|| file.with_extension(""));
+            crypto::read_identities(&identity).and_then(|ids| crypto::decrypt_file(&file, &out, &ids)).map(|_| println!("Wrote {}", out.display()))
         }
         Cmd::Incidents => cli::incidents(),
         Cmd::Diag { what: DiagCmd::Live { secs } } => cli::diag_live(secs),

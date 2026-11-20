@@ -4,6 +4,7 @@
 //! Everything here is pure logic plus file I/O so it can be unit-tested
 //! without administrator rights or ETW.
 
+pub mod agentproto;
 pub mod classifier;
 pub mod config;
 pub mod journal;

@@ -197,6 +197,81 @@ first waits `incident_after_s` (60 s) to capture the aftermath.
 minidumps, the incident folder and a `manifest.json`. This is the hand-off
 format for the phase 4 viewer and AI analysis.
 
+### User-session agent (phase 3)
+
+`bbx-agent.exe` (a GUI-subsystem exe, no console) starts at every sign-in
+from the HKLM Run key and runs as the user, one per session. It sees what a
+SYSTEM service in session 0 cannot:
+
+| Event (`UserEvent.kind`) | Source |
+|---|---|
+| `hung`, `hung_end` | `IsHungAppWindow` over visible top-level windows every 2 s; process and window class, never titles |
+| `ui_stall` | the agent's own 2 s timer firing late: the desktop session stopped processing messages |
+| `display` | `GUID_CONSOLE_DISPLAY_STATE`: off / on / dimmed, with seconds since last input |
+| `session` | lock, unlock, logon, logoff, remote connect/disconnect |
+| `power` | suspend / resume as seen by the session |
+| `resolution` | `WM_DISPLAYCHANGE`: resolution and monitor count |
+| `foreground` | foreground process changes (exe name only) |
+| `idle`, `active` | no input for 120 s, and back |
+| `shell` | `TaskbarCreated`: Explorer restarted |
+| `mark` | tray menu **It just happened** or **Ctrl+Alt+Shift+B** |
+
+It talks to the service only through files (`bbx_core::agentproto`):
+`triggers\` (users may create files, nothing else) for marks, event batches
+and screenshots; `public\` (users may read) for its settings and the newest
+incident id. The service treats everything from `triggers\` as untrusted:
+size caps, JSON parsing, clamped timestamps, PNG signature check.
+
+Incidents from the agent: a window hung for 15 s or more, a UI stall of
+5 s or more, **the display turning off within 30 s of user input** (the "it
+just went black" case, as opposed to a power-saving timeout), and Explorer
+restarting.
+
+**Screenshots** (off by default, `"screenshots": true` in config.json): a
+ring of grayscale frames, 800 px wide, one every 5 s, 24 kept (2 minutes),
+held only in the agent's memory. They are written out only when an incident
+opens (the service signals through `public\incident.json`), when the user
+marks, or when a window hangs, and the service files them under the
+incident's `screens\` folder. Unclaimed frames are deleted after 10
+minutes.
+
+### Hardware health (phase 3)
+
+Read with storage ioctls on `\\.\PhysicalDriveN` (no WMI, no drivers), at
+start and hourly (`DiskHealth`):
+
+- model, bus, serial; temperature with the drive's own warning and critical
+  thresholds (NVMe and SATA);
+- NVMe SMART/Health log (page 02h): critical warning bits, spare, wear,
+  media errors, error log entries, power-on hours, and the drive's own
+  **unsafe shutdown** counter;
+- ATA SMART attributes (via `IOCTL_STORAGE_PREDICT_FAILURE`): reallocated,
+  pending and uncorrectable sectors, command timeouts, interface CRC errors
+  (cables), unexpected power loss and power-off retract counts.
+
+At startup the unsafe-shutdown counters are compared with the previous run;
+an increase is reported as independent evidence that power was lost without
+a clean flush. Incidents: SMART failure prediction, a new NVMe critical
+warning, rising media errors or bad-sector / CRC counters, and running at or
+above the drive's warning temperature (70 C if it has none).
+
+`Power` records AC/battery state, battery level, charging and battery saver
+whenever they change; a critically low battery opens an incident.
+
+### Packet ring (phase 3, optional)
+
+With `"packet_capture": true`, the service runs Windows' `pktmon` in
+circular mode: headers only (`packet_snaplen`, 128 bytes) in a 256 MB ring.
+An incident stops the ring, converts it to `packets.pcapng` in the incident
+folder (open in Wireshark) and starts a new one.
+
+### Encrypted bundles (phase 3)
+
+`bbx keygen` creates an age (X25519) key pair for a technician. With
+`export_recipients` in config.json (or `--recipient`), `bbx export` encrypts
+the bundle to those keys and deletes the plaintext; `bbx decrypt` (or the
+standard `age` tool) opens it.
+
 ---
 
 ## 4. Journal format (crash-safety contract)
@@ -346,10 +421,12 @@ Command lines, file paths, DNS names and (later) screenshots are sensitive.
    decoding; process start/stop with exit codes, including short-lived
    processes; network, DNS, disk, file and registry rollups; detectors and
    incidents; `bbx export` bundles; `bbx diag live`.
-3. **User session and hardware.** Tray agent (hung-window detection, "it just
-   happened" button, optional low-res screenshot ring, input activity); SMART
-   and storage reliability; sensors; optional `pktmon` packet ring; bundle
-   encryption.
+3. **User session and hardware (built).** Tray agent (hung windows, display
+   state, UI stalls, sessions, foreground/idle, "It just happened" button and
+   hotkey, optional screenshot ring); disk health from NVMe/ATA SMART and
+   temperature; power/battery; optional `pktmon` packet ring; encrypted
+   bundles. Not covered: CPU/GPU temperatures beyond ACPI thermal zones
+   (those need vendor libraries or a kernel driver).
 4. **Viewer and AI.** Timeline playback across all tiers, black-box
    drill-down, rules-based suspects, and an AI narrative built from a compact
    incident digest.

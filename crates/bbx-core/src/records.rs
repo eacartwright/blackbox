@@ -35,6 +35,9 @@ pub enum RecordType {
     FileActivity = 43,
     RegistryActivity = 44,
     DriverLoad = 45,
+    DiskHealth = 50,
+    Power = 51,
+    UserEvent = 52,
 }
 
 impl RecordType {
@@ -45,6 +48,7 @@ impl RecordType {
         Self::PdhSample, Self::Device, Self::DeviceInventory, Self::EventLog,
         Self::Incident, Self::BlackBox, Self::NetFlows, Self::DnsQueries,
         Self::DiskActivity, Self::FileActivity, Self::RegistryActivity, Self::DriverLoad,
+        Self::DiskHealth, Self::Power, Self::UserEvent,
     ];
 
     pub fn from_u16(v: u16) -> Option<Self> {
@@ -77,6 +81,9 @@ impl RecordType {
             Self::FileActivity => "FileActivity",
             Self::RegistryActivity => "RegistryActivity",
             Self::DriverLoad => "DriverLoad",
+            Self::DiskHealth => "DiskHealth",
+            Self::Power => "Power",
+            Self::UserEvent => "UserEvent",
         }
     }
 
@@ -515,6 +522,101 @@ pub struct DriverLoad {
     pub path: String,
     pub base: String,
     pub size: u64,
+}
+
+// ---------------------------------------------------------------- hardware (phase 3)
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct AtaAttr {
+    pub id: u8,
+    pub name: String,
+    /// Normalised current value (higher is better; vendor-defined scale).
+    pub value: u8,
+    pub worst: u8,
+    pub raw: u64,
+}
+
+/// NVMe SMART / Health Information (log page 02h).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct NvmeHealth {
+    /// Bit 0 spare low, 1 temperature, 2 reliability degraded, 3 read-only,
+    /// 4 volatile backup failed. Non-zero = the drive itself says "trouble".
+    pub critical_warning: u8,
+    pub temp_c: i16,
+    pub spare_pct: u8,
+    pub spare_threshold_pct: u8,
+    /// Endurance used, percent (can exceed 100).
+    pub used_pct: u8,
+    pub read_gb: u64,
+    pub written_gb: u64,
+    pub power_cycles: u64,
+    pub power_on_hours: u64,
+    /// Times power was lost without the drive being told to flush.
+    pub unsafe_shutdowns: u64,
+    pub media_errors: u64,
+    pub error_log_entries: u64,
+    pub warning_temp_minutes: u32,
+    pub critical_temp_minutes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct DiskHealthRow {
+    pub disk: u32,
+    pub model: String,
+    #[serde(default)]
+    pub serial: String,
+    pub bus: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temp_c: Option<i16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warn_c: Option<i16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crit_c: Option<i16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predict_failure: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nvme: Option<NvmeHealth>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ata: Vec<AtaAttr>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DiskHealth {
+    pub disks: Vec<DiskHealthRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct Power {
+    /// AC power connected (None = unknown).
+    pub ac: Option<bool>,
+    pub battery: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery_pct: Option<u8>,
+    pub charging: bool,
+    pub critical: bool,
+    pub saver: bool,
+}
+
+// ---------------------------------------------------------------- user session (phase 3)
+
+/// Something the per-user agent observed in an interactive session.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserEvent {
+    pub session: u32,
+    #[serde(default)]
+    pub user: String,
+    /// "hung" | "hung_end" | "ui_stall" | "foreground" | "idle" | "active" |
+    /// "display" | "session" | "resolution" | "power" | "agent"
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub proc: String,
+    #[serde(default)]
+    pub pid: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+    /// Kind-specific number: hang seconds, idle seconds, stall ms, ...
+    #[serde(default)]
+    pub value: f64,
 }
 
 #[cfg(test)]

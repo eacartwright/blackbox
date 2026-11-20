@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 bbx-core.workspace = true
 bbx-collect.workspace = true
+age.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -22,3 +23,6 @@ windows-service.workspace = true
 windows-sys.workspace = true
 zip.workspace = true
 
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -287,8 +287,11 @@ pub fn export(
     after: u64,
     out: Option<std::path::PathBuf>,
     include_etl: bool,
+    recipients: Vec<String>,
 ) -> Result<()> {
     let paths = paths_readable()?;
+    let cfg = bbx_core::config::Config::load(&paths.config());
+    let recipients = crate::crypto::parse_recipients(if recipients.is_empty() { &cfg.export_recipients } else { &recipients })?;
     let (from_ft, to_ft, at_ft) = if let Some(id) = &incident {
         crate::export::incident_window(&paths, id)?
     } else if let Some(a) = around {
@@ -304,8 +307,17 @@ pub fn export(
         &paths,
         crate::export::ExportOptions { from_ft, to_ft, at_ft, incident, out, include_etl },
     )?;
+    let out = if recipients.is_empty() {
+        out
+    } else {
+        let enc = std::path::PathBuf::from(format!("{}.age", out.display()));
+        let r = crate::crypto::encrypt_file(&out, &enc, &recipients);
+        std::fs::remove_file(&out).ok(); // never leave the plaintext behind
+        r?;
+        enc
+    };
     let mb = std::fs::metadata(&out).map(|m| m.len() as f64 / 1048576.0).unwrap_or(0.0);
-    println!("Wrote {} ({mb:.1} MB)", out.display());
+    println!("Wrote {} ({mb:.1} MB{})", out.display(), if recipients.is_empty() { "" } else { ", encrypted" });
     Ok(())
 }
 

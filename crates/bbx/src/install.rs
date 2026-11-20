@@ -45,6 +45,8 @@ fn require_admin() -> Result<()> {
     Ok(())
 }
 
+const RUN_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+
 fn install_dir() -> PathBuf {
     let pf = std::env::var_os("ProgramFiles").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
     pf.join("BlackBox")
@@ -92,7 +94,8 @@ pub fn install(opts: InstallOptions) -> Result<()> {
         }
     }
 
-    // 1. Program files.
+    // 1. Program files (stop user agents first: their exe would be locked).
+    run("taskkill", &["/IM", "bbx-agent.exe", "/F"]);
     let dir = install_dir();
     std::fs::create_dir_all(&dir)?;
     let exe_src = std::env::current_exe()?;
@@ -101,14 +104,28 @@ pub fn install(opts: InstallOptions) -> Result<()> {
         std::fs::copy(&exe_src, &exe_dst).with_context(|| format!("copy to {}", exe_dst.display()))?;
     }
     println!("Installed {}", exe_dst.display());
+    let agent_src = exe_src.with_file_name("bbx-agent.exe");
+    let agent_dst = dir.join("bbx-agent.exe");
+    let have_agent = if agent_src.exists() {
+        if !same_file(&agent_src, &agent_dst) {
+            std::fs::copy(&agent_src, &agent_dst).with_context(|| format!("copy to {}", agent_dst.display()))?;
+        }
+        println!("Installed {}", agent_dst.display());
+        true
+    } else {
+        println!("Note: bbx-agent.exe not found next to bbx.exe; the user-session agent will not be installed");
+        false
+    };
 
     // 2. Data directories, locked to SYSTEM + Administrators; users may only
     //    drop marker files into triggers\.
     paths.ensure()?;
     let root = paths.root.display().to_string();
     run("icacls", &[&root, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/T", "/Q"]);
-    run("icacls", &[&paths.triggers().display().to_string(), "/grant", "*S-1-5-32-545:(WD,AD,S)", "/Q"]);
-    println!("Data directory {root} (SYSTEM and Administrators only)");
+    // Users: create files in triggers\ (and only touch their own), read public\.
+    run("icacls", &[&paths.triggers().display().to_string(), "/grant", "*S-1-5-32-545:(WD,AD,S)", "*S-1-3-0:(OI)(CI)(IO)M", "/Q"]);
+    run("icacls", &[&paths.public().display().to_string(), "/grant", "*S-1-5-32-545:(OI)(CI)RX", "/Q"]);
+    println!("Data directory {root} (SYSTEM and Administrators only; users can drop marks and read agent settings)");
 
     // 3. Config.
     let cfg_path = paths.config();
@@ -160,6 +177,18 @@ pub fn install(opts: InstallOptions) -> Result<()> {
         apply_system_changes();
     } else {
         println!("Skipping system changes (--no-system-changes)");
+    }
+
+    // 6. User-session agent at every sign-in, and now for this user.
+    if have_agent {
+        let cmd = format!("\"{}\"", agent_dst.display());
+        if run("reg", &["add", RUN_KEY, "/v", "BlackBoxAgent", "/t", "REG_SZ", "/d", &cmd, "/f"]) {
+            println!("Tray agent will start at every user sign-in");
+        }
+        // Launch through Explorer so it runs unelevated as the signed-in user.
+        if std::process::Command::new("explorer.exe").arg(&agent_dst).spawn().is_ok() {
+            println!("Tray agent started for this session");
+        }
     }
 
     if opts.start {
@@ -218,6 +247,12 @@ pub fn uninstall(purge: bool) -> Result<()> {
     }
     blackbox::stop()?;
     bbx_collect::etwlive::stop_session(bbx_collect::etwlive::LIVE_SESSION);
+    if Config::load(&Paths::from_env().config()).packet_capture {
+        bbx_collect::pktmon::stop();
+    }
+    run("reg", &["delete", RUN_KEY, "/v", "BlackBoxAgent", "/f"]);
+    run("taskkill", &["/IM", "bbx-agent.exe", "/F"]);
+    println!("Tray agent removed");
     println!("Black-box and live ETW sessions stopped");
     let paths = Paths::from_env();
     if purge {

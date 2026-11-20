@@ -85,6 +85,7 @@ fn open(ctx: &Arc<Ctx>, req: IncidentRequest) {
         to_ft: to,
     };
     ctx.emit_critical(RecordType::Incident, &inc);
+    crate::ingest::signal_incident(ctx, &inc);
     if let Ok(b) = serde_json::to_vec_pretty(&inc) {
         std::fs::write(folder.join("incident.json"), b).ok();
     }
@@ -120,6 +121,12 @@ fn gather(ctx: &Ctx, inc: &rec::Incident, folder: &Path) {
     for ch in ["System", "Application"] {
         if let Err(e) = eventlog::export_range(ch, inc.from_ft - 60 * FT_PER_SEC, to, &ev.join(format!("{ch}.evtx"))) {
             notes.push(format!("{e:#}"));
+        }
+    }
+    if ctx.cfg.packet_capture {
+        match bbx_collect::pktmon::snapshot(ctx, &folder.join("packets.pcapng")) {
+            Ok(()) => notes.push("packet capture saved".into()),
+            Err(e) => notes.push(format!("packets: {e:#}")),
         }
     }
     ctx.journal.commit().ok();
