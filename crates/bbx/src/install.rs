@@ -82,6 +82,35 @@ pub fn set_exact_dacl(path: &Path, sddl: &str) -> Result<()> {
     Ok(())
 }
 
+/// End any bbx.exe still running from the install folder (never this
+/// process): a service process that failed to exit would lock the exe.
+fn kill_installed_bbx() {
+    let me = std::process::id();
+    let filter_pid = format!("PID ne {me}");
+    let out = Command::new("wmic").args(["process", "where", "name='bbx.exe'", "get", "ProcessId,ExecutablePath", "/format:csv"]).output();
+    let dir = install_dir().join("bbx.exe").display().to_string().to_ascii_lowercase();
+    let mut killed = false;
+    if let Ok(o) = out {
+        for line in String::from_utf8_lossy(&o.stdout).lines() {
+            let cols: Vec<&str> = line.trim().split(',').collect();
+            if cols.len() >= 3 && cols[1].to_ascii_lowercase() == dir {
+                if let Ok(pid) = cols[2].trim().parse::<u32>() {
+                    if pid != me && run("taskkill", &["/PID", &pid.to_string(), "/F"]) {
+                        killed = true;
+                    }
+                }
+            }
+        }
+    } else {
+        // wmic missing (newer Windows): fall back to all other bbx.exe processes.
+        killed = run("taskkill", &["/F", "/FI", "IMAGENAME eq bbx.exe", "/FI", &filter_pid]);
+    }
+    if killed {
+        println!("Ended a leftover BlackBox process that was still running");
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
 const RUN_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
 
 fn install_dir() -> PathBuf {
@@ -133,6 +162,7 @@ pub fn install(opts: InstallOptions) -> Result<()> {
 
     // 1. Program files (stop user agents first: their exe would be locked).
     run("taskkill", &["/IM", "bbx-agent.exe", "/F"]);
+    kill_installed_bbx();
     let dir = install_dir();
     std::fs::create_dir_all(&dir)?;
     let exe_src = std::env::current_exe()?;

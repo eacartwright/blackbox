@@ -132,6 +132,8 @@ pub fn run(stop: Arc<Stop>, system_shutdown: Arc<AtomicBool>, opts: RunOptions) 
         }
         if t.is_finished() {
             t.join().ok();
+        } else {
+            log::warn!("thread '{}' did not stop within 10 s", t.thread().name().unwrap_or("?"));
         }
     }
 

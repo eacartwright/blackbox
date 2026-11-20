@@ -95,5 +95,16 @@ fn run_service() -> Result<()> {
         st.exit_code = ServiceExitCode::ServiceSpecific(1);
     }
     h.set_service_status(st)?;
+    // Everything is saved by now. Make sure the process really goes away:
+    // a stuck worker thread once kept it alive after reporting STOPPED,
+    // which locked bbx.exe and blocked the next install.
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_secs(3));
+        log::warn!("process still alive 3 s after stopping; terminating");
+        log::logger().flush();
+        unsafe {
+            windows_sys::Win32::System::Threading::TerminateProcess(windows_sys::Win32::System::Threading::GetCurrentProcess(), 0);
+        }
+    });
     result
 }
