@@ -16,6 +16,7 @@ down.
   warning.
 
 The design and on-disk formats are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+What's left to do, known issues and where things live (including the tray icon text) are in [docs/NEXT.md](docs/NEXT.md).
 
 ## What's recorded
 
@@ -116,6 +117,7 @@ Other commands:
 | `bbx decrypt <bundle.age> -i blackbox-tech.key` | Open an encrypted bundle |
 | `bbx blackbox status` | ETW session state and files |
 | `bbx run --for-secs 60` | Record in the foreground (testing; no black box unless elevated) |
+| `bbx stop` / `bbx start` | Stop recording (service and both ETW sessions) / start again; elevated. Also in the tray menu, behind a UAC prompt |
 | `bbx uninstall [--purge]` | Remove the service and black box (and optionally all data) |
 
 Users can also press **Ctrl+Alt+Shift+B**, or right-click the tray icon >

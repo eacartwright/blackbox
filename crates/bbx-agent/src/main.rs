@@ -11,6 +11,7 @@
 #![windows_subsystem = "windows"]
 
 mod outbox;
+mod service;
 mod screens;
 mod watch;
 
@@ -36,6 +37,8 @@ const TICK_MS: u32 = 2000;
 const HOTKEY_ID: i32 = 1;
 const CMD_MARK: usize = 100;
 const CMD_ABOUT: usize = 101;
+const CMD_TOGGLE: usize = 102;
+const CMD_HIDE: usize = 103;
 const ERROR_ALREADY_EXISTS: u32 = 183;
 const DEVICE_NOTIFY_WINDOW_HANDLE: u32 = 0;
 const PBT_APMSUSPEND: usize = 0x4;
@@ -60,6 +63,8 @@ struct Agent {
     screens: screens::Ring,
     last_tick: Instant,
     last_signal: Option<String>,
+    /// Last seen service state, to announce when recording stops or starts.
+    service_running: Option<bool>,
     taskbar_created: u32,
     /// Suppress stall detection right after resume/unlock.
     quiet_until: Instant,
@@ -129,6 +134,7 @@ fn main() {
                 paths: paths.clone(),
                 last_tick: Instant::now(),
                 last_signal: read_signal(&paths).map(|s| s.id),
+                service_running: service::running(),
                 taskbar_created,
                 quiet_until: Instant::now() + Duration::from_secs(10),
             })
@@ -153,6 +159,10 @@ fn main() {
     }
 }
 
+/// Tray tooltip text (max 127 characters).
+const TIP_RECORDING: &str = "BlackBox is recording. Something went wrong? Right-click > Capture Incident (Ctrl+Alt+Shift+B)";
+const TIP_STOPPED: &str = "BlackBox is NOT recording. Right-click > Start recording to turn it back on.";
+
 fn icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
     let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
     nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
@@ -172,8 +182,16 @@ fn add_tray(hwnd: HWND) {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAY;
     nid.hIcon = unsafe { LoadIconW(std::ptr::null_mut(), IDI_INFORMATION) };
-    copy_into(&mut nid.szTip, "BlackBox is recording. Something went wrong? Right-click > It just happened (Ctrl+Alt+Shift+B)");
+    copy_into(&mut nid.szTip, TIP_RECORDING);
     unsafe { Shell_NotifyIconW(NIM_ADD, &nid) };
+}
+
+fn set_tip(hwnd: HWND, recording: bool) {
+    let mut nid = icon_data(hwnd);
+    nid.uFlags = NIF_TIP;
+    let tip = if recording { TIP_RECORDING } else { TIP_STOPPED };
+    copy_into(&mut nid.szTip, tip);
+    unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid) };
 }
 
 fn remove_tray(hwnd: HWND) {
@@ -193,7 +211,18 @@ fn balloon(hwnd: HWND, title: &str, text: &str) {
 fn show_menu(hwnd: HWND) {
     unsafe {
         let menu = CreatePopupMenu();
-        AppendMenuW(menu, MF_STRING, CMD_MARK, wide("It just happened - save what the PC was doing\tCtrl+Alt+Shift+B").as_ptr());
+        AppendMenuW(menu, MF_STRING, CMD_MARK, wide("Capture Incident\tCtrl+Alt+Shift+B").as_ptr());
+        AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+        // Stopping or starting the service needs an administrator (UAC prompt).
+        let toggle = match service::running() {
+            Some(true) => Some("Stop recording…"),
+            Some(false) => Some("Start recording…"),
+            None => None, // service not installed
+        };
+        if let Some(t) = toggle {
+            AppendMenuW(menu, MF_STRING, CMD_TOGGLE, wide(t).as_ptr());
+        }
+        AppendMenuW(menu, MF_STRING, CMD_HIDE, wide("Hide tray icon (recording continues)").as_ptr());
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         AppendMenuW(menu, MF_STRING, CMD_ABOUT, wide("About BlackBox").as_ptr());
         let mut pt = POINT { x: 0, y: 0 };
@@ -203,10 +232,19 @@ fn show_menu(hwnd: HWND) {
         DestroyMenu(menu);
         match cmd as usize {
             CMD_MARK => mark(),
+            CMD_TOGGLE => {
+                let verb = if service::running() == Some(true) { "stop" } else { "start" };
+                if !service::run_elevated(hwnd, verb) {
+                    balloon(hwnd, "BlackBox", "Not changed: administrator approval is needed to stop or start recording.");
+                }
+            }
+            CMD_HIDE => {
+                DestroyWindow(hwnd);
+            }
             CMD_ABOUT => {
                 MessageBoxW(
                     hwnd,
-                    wide("BlackBox records what this PC is doing so that freezes, crashes and slowdowns can be investigated afterwards.\n\nIf something goes wrong, use \"It just happened\" (or press Ctrl+Alt+Shift+B) right away. Your IT support will be able to see what happened just before.").as_ptr(),
+                    wide("BlackBox records what this PC is doing so that freezes, crashes and slowdowns can be investigated afterwards.\n\nIf something goes wrong, use \"Capture Incident\" (or press Ctrl+Alt+Shift+B) right away. Your IT support will be able to see what happened just before.").as_ptr(),
                     wide("BlackBox").as_ptr(),
                     MB_OK | MB_ICONINFORMATION,
                 );
@@ -219,7 +257,7 @@ fn show_menu(hwnd: HWND) {
 fn mark() {
     with_agent(|a| {
         let fg = watch::foreground_process().unwrap_or_default();
-        let mf = MarkFile { note: format!("user pressed It just happened (foreground: {fg})"), user: a.out.user.clone(), session: a.out.session, foreground: fg };
+        let mf = MarkFile { note: format!("user pressed Capture Incident (foreground: {fg})"), user: a.out.user.clone(), session: a.out.session, foreground: fg };
         a.out.push("mark", &mf.foreground, 0, "", 0.0, true);
         a.out.flush();
         a.out.write_mark(&mf);
@@ -242,6 +280,20 @@ fn on_tick() {
         // Our own message loop ran late: the user session stalled.
         if gap > Duration::from_millis(TICK_MS as u64 * 3) && Instant::now() > a.quiet_until {
             a.out.push("ui_stall", "", 0, "the desktop session stopped processing messages", gap.as_millis() as f64, true);
+        }
+        // Announce recording stopping or starting (by anyone, not just us).
+        let now_running = service::running();
+        if now_running.is_some() && now_running != a.service_running {
+            if a.service_running.is_some() {
+                let (title, text) = if now_running == Some(true) {
+                    ("BlackBox: recording", "BlackBox is recording again.")
+                } else {
+                    ("BlackBox: stopped", "BlackBox has stopped recording. Problems from now on will not be captured.")
+                };
+                balloon(a.hwnd, title, text);
+            }
+            a.service_running = now_running;
+            set_tip(a.hwnd, now_running == Some(true));
         }
         if a.settings_checked.elapsed() > Duration::from_secs(60) {
             a.settings_checked = Instant::now();

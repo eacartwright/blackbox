@@ -45,6 +45,43 @@ fn require_admin() -> Result<()> {
     Ok(())
 }
 
+/// Protected DACL: SYSTEM and Administrators, full control, inherited by
+/// subfolders and files. Nothing else.
+pub const ROOT_SDDL: &str = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+
+/// Replace a path's DACL with the one in `sddl` (and its protected flag).
+pub fn set_exact_dacl(path: &Path, sddl: &str) -> Result<()> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::{GetSecurityDescriptorDacl, ACL, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION};
+    const SDDL_REVISION_1: u32 = 1;
+    let w: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
+    let p: Vec<u16> = path.as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let mut sd = std::ptr::null_mut();
+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(w.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) == 0 {
+            bail!("invalid SDDL: {}", std::io::Error::last_os_error());
+        }
+        let (mut present, mut defaulted) = (0, 0);
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted);
+        let rc = SetNamedSecurityInfoW(
+            p.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            dacl,
+            std::ptr::null(),
+        );
+        LocalFree(sd as _);
+        if rc != 0 {
+            bail!("SetNamedSecurityInfo failed: {}", std::io::Error::from_raw_os_error(rc as i32));
+        }
+    }
+    Ok(())
+}
+
 const RUN_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
 
 fn install_dir() -> PathBuf {
@@ -121,7 +158,12 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     //    drop marker files into triggers\.
     paths.ensure()?;
     let root = paths.root.display().to_string();
-    run("icacls", &[&root, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/Q"]);
+    // Exactly SYSTEM + Administrators, protected from inheritance. Replacing
+    // the whole DACL also removes entries added later by hand (e.g. Explorer's
+    // "Continue" prompt grants the clicking account full control).
+    if let Err(e) = set_exact_dacl(&paths.root, ROOT_SDDL) {
+        eprintln!("  ! could not set permissions on {root}: {e:#}");
+    }
     let children = format!("{root}\\*");
     if !run("icacls", &[&children, "/reset", "/T", "/C", "/Q"]) {
         // Files with a broken ACL can't be reset until Administrators own them.
@@ -239,6 +281,39 @@ fn apply_system_changes() {
     println!("  - CrashOnCtrlScroll enabled (after the next reboot, hold Right Ctrl + press Scroll Lock twice to force a dump during a total freeze)");
 }
 
+/// Deliberate stop: the service and both ETW sessions. (A crashed service
+/// leaves the black box running on purpose; a requested stop must not, or
+/// nothing would prune its files.)
+pub fn stop_recording() -> Result<()> {
+    require_admin()?;
+    let mgr = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+    let svc = mgr.open_service(SERVICE_NAME, ServiceAccess::QUERY_STATUS | ServiceAccess::STOP).context("BlackBox is not installed")?;
+    if svc.query_status()?.current_state != ServiceState::Stopped {
+        svc.stop()?;
+        if !wait_for_state(&svc, ServiceState::Stopped, Duration::from_secs(30)) {
+            bail!("the service did not stop within 30 s");
+        }
+    }
+    blackbox::stop()?;
+    bbx_collect::etwlive::stop_session(bbx_collect::etwlive::LIVE_SESSION);
+    println!("BlackBox stopped recording. Start it again with `bbx start` (it also starts at the next boot).");
+    Ok(())
+}
+
+pub fn start_recording() -> Result<()> {
+    require_admin()?;
+    let mgr = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+    let svc = mgr.open_service(SERVICE_NAME, ServiceAccess::QUERY_STATUS | ServiceAccess::START).context("BlackBox is not installed")?;
+    if svc.query_status()?.current_state != ServiceState::Running {
+        svc.start(&[] as &[&str])?;
+        if !wait_for_state(&svc, ServiceState::Running, Duration::from_secs(15)) {
+            bail!("the service did not report running within 15 s; see `bbx status`");
+        }
+    }
+    println!("BlackBox is recording.");
+    Ok(())
+}
+
 pub fn uninstall(purge: bool) -> Result<()> {
     require_admin()?;
     let mgr = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
@@ -281,5 +356,35 @@ fn same_file(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(x), Ok(y)) => x == y,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn acl(p: &Path) -> String {
+        let o = Command::new("icacls").arg(p).output().unwrap();
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    }
+
+    #[test]
+    fn exact_dacl_removes_extra_entries() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("root");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("f.bin"), b"x").unwrap();
+        // An extra explicit entry, like Explorer's "Continue" adds.
+        assert!(Command::new("icacls").arg(&dir).args(["/grant", "*S-1-5-32-545:(OI)(CI)F", "/Q"]).status().unwrap().success());
+        assert!(acl(&dir).contains(r"BUILTIN\Users"));
+
+        set_exact_dacl(&dir, ROOT_SDDL).unwrap();
+        let a = acl(&dir);
+        assert!(!a.contains(r"BUILTIN\Users"), "{a}");
+        assert!(a.contains(r"NT AUTHORITY\SYSTEM:(OI)(CI)(F)") && a.contains(r"BUILTIN\Administrators:(OI)(CI)(F)"), "{a}");
+        assert_eq!(a.lines().filter(|l| l.contains(":(")).count(), 2, "{a}");
+
+        // Give ourselves back access so the temp dir can be removed.
+        set_exact_dacl(&dir, "D:P(A;OICI;FA;;;WD)").unwrap();
     }
 }

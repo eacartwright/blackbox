@@ -39,6 +39,10 @@ enum Cmd {
         #[arg(long)]
         no_start: bool,
     },
+    /// Stop recording: stops the service and both ETW sessions. Run elevated.
+    Stop,
+    /// Start recording again. Run elevated.
+    Start,
     /// Stop and remove the service and the black-box session. Run elevated.
     Uninstall {
         /// Also delete all recorded data.
@@ -251,6 +255,8 @@ fn main() {
             start: !no_start,
         }),
         Cmd::Uninstall { purge } => install::uninstall(purge),
+        Cmd::Stop => install::stop_recording(),
+        Cmd::Start => install::start_recording(),
         Cmd::Status => cli::status(),
         Cmd::Run { verbose, for_secs } => cli::run_console(verbose, for_secs),
         Cmd::Around { time, minutes, after } => cli::around(&time, minutes, after),

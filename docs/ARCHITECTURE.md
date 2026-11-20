@@ -457,8 +457,10 @@ Command lines, file paths, DNS names and (later) screenshots are sensitive.
 
 - Redaction rules run before anything is written: argument patterns such as
   `password=`, `/p:`, bearer tokens and connection strings.
-- `%ProgramData%\BlackBox` is ACL'd to SYSTEM and Administrators, except
-  `triggers\`, which only accepts small marker files from users.
+- `%ProgramData%\BlackBox` gets an exact, protected DACL (SYSTEM and
+  Administrators only) on every install, which also removes entries added by
+  hand; everything below inherits it. Exceptions: `triggers\`, where users
+  may create files, and `public\`, which users may read.
 - Exported bundles can be encrypted to a technician key (phase 3).
 - `bbx install` shows what is collected and asks for confirmation.
 
@@ -484,3 +486,6 @@ Command lines, file paths, DNS names and (later) screenshots are sensitive.
    black-box drill-down, rule-based suspects, the digest, and Claude analysis
    (`bbx analyze`). Startup failures of the service are also written to the
    Application event log and shown by `bbx status`.
+
+Open items, known issues and the next features are tracked in
+[NEXT.md](NEXT.md).
