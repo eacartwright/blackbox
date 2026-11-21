@@ -398,6 +398,26 @@ fn main() {
     };
     if let Err(e) = res {
         eprintln!("error: {e:#}");
+        pause_if_own_window();
         std::process::exit(1);
+    }
+}
+
+/// Started by a double-click or the Start menu, the console window is ours
+/// alone and would close before the error could be read: wait for Enter.
+/// Not when the window is hidden (the tray runs bbx that way) or shared
+/// with a terminal.
+fn pause_if_own_window() {
+    use windows_sys::Win32::System::Console::{GetConsoleProcessList, GetConsoleWindow};
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+    let mut ids = [0u32; 4];
+    let alone = unsafe { GetConsoleProcessList(ids.as_mut_ptr(), ids.len() as u32) } == 1;
+    let visible = unsafe {
+        let w = GetConsoleWindow();
+        !w.is_null() && IsWindowVisible(w) != 0
+    };
+    if alone && visible {
+        eprintln!("\nPress Enter to close this window.");
+        let _ = std::io::stdin().read_line(&mut String::new());
     }
 }

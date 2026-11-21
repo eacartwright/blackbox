@@ -37,6 +37,17 @@ pub struct ViewOptions {
     pub url_file: Option<PathBuf>,
 }
 
+/// Open a web address in the default browser. (`explorer.exe <url>` is not
+/// reliable: on some PCs it opens nothing, and elevated it shows Documents.)
+fn open_in_browser(url: &str) -> bool {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let w = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let (verb, file) = (w("open"), w(url));
+    let r = unsafe { ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+    r as isize > 32
+}
+
 /// Write one line for the tray agent: the page address, "EMPTY", or
 /// "ERROR: ...". Written whole and then renamed, so the agent never reads
 /// half a line.
@@ -120,8 +131,8 @@ pub fn serve(ds: Dataset, opts: ViewOptions) -> Result<()> {
     });
     if let Some(f) = &opts.url_file {
         write_url_file(f, &url);
-    } else if opts.open_browser {
-        std::process::Command::new("explorer.exe").arg(&url).spawn().ok();
+    } else if opts.open_browser && !open_in_browser(&url) {
+        println!("Could not open a browser; open the address above yourself.");
     }
     if let Some(limit) = opts.idle_exit {
         let srv = srv.clone();
