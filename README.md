@@ -80,7 +80,10 @@ BlackBox-Setup-0.1.0.exe /VERYSILENT /RECIPIENT=age1...
 ```
 
 Add `/MERGETASKS="!evidence"` to leave Windows logging settings alone, or
-`/TYPE=technician` for the tools only.
+`/TYPE=technician /MERGETASKS="assoc"` for the tools only with double-click to
+open bundles. The double-click option is on the tasks page for either type
+(ticked by default for technician installs), so a PC can record and open
+bundles too.
 
 ## Use
 

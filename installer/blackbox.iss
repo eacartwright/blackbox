@@ -4,7 +4,8 @@
 ; Unattended install (e.g. for Intune or a deployment script):
 ;   BlackBox-Setup-x.y.z.exe /VERYSILENT /RECIPIENT=age1...
 ; Add /MERGETASKS="!evidence" to leave Windows logging settings alone, or
-; /TYPE=technician for the viewer tools only (no recording).
+; /TYPE=technician /MERGETASKS="assoc" for the viewer tools only (no
+; recording) with double-click to open bundles.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -48,7 +49,9 @@ Name: "recorder"; Description: "Recording service and tray icon";  Types: record
 
 [Tasks]
 Name: "evidence"; Description: "Configure Windows to keep more evidence (larger event logs, crash dumps, Right Ctrl + Scroll Lock crash for total freezes)"; Components: recorder
-Name: "assoc"; Description: "Open encrypted BlackBox bundles (.zip.age) by double-clicking them"; Components: tools and not recorder
+; Off by default; ticked automatically for "Technician tools only" (CurPageChanged).
+; Unattended: /MERGETASKS="assoc".
+Name: "assoc"; Description: "Open encrypted BlackBox bundles (.zip.age) by double-clicking them"; Components: tools; Flags: unchecked
 
 [Files]
 Source: "{#BinDir}\bbx.exe";       DestDir: "{app}"; Flags: ignoreversion
@@ -79,6 +82,10 @@ Type: files; Name: "{app}\install.log"
 [Code]
 var
   KeyPage: TInputQueryWizardPage;
+  // An installed BlackBox service existed before this run (upgrade).
+  WasRecording: Boolean;
+  // The files were replaced and bbx install ran.
+  InstallFinished: Boolean;
 
 function NeedsAddPath(Dir: String): Boolean;
 var
@@ -122,6 +129,21 @@ begin
   KeyPage.Values[0] := ExpandConstant('{param:RECIPIENT|}');
 end;
 
+var
+  AssocDefaulted: Boolean;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  // A technician-only install is for opening bundles: tick the double-click
+  // option the first time the tasks page shows (never untick a choice).
+  if (CurPageID = wpSelectTasks) and not AssocDefaulted then
+  begin
+    AssocDefaulted := True;
+    if not WizardIsComponentSelected('recorder') then
+      WizardSelectTasks('assoc');
+  end;
+end;
+
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := (PageID = KeyPage.ID) and not WizardIsComponentSelected('recorder');
@@ -156,11 +178,30 @@ begin
     Result := 'The /RECIPIENT value is not a valid technician public key (62 characters, starting with age1).';
     exit;
   end;
-  // An upgrade: stop the service, both ETW sessions and the tray agent so
-  // their files can be replaced. bbx install starts everything again.
+  // An upgrade: stop the service, both ETW sessions, the tray agent and any
+  // open viewer (bbx view) so their files can be replaced. bbx install
+  // starts recording again; DeinitializeSetup does if setup stops early.
   if FileExists(ExpandConstant('{app}\bbx.exe')) then
+  begin
+    WasRecording := Exec(ExpandConstant('{sys}\sc.exe'), 'query BlackBox', '', SW_HIDE, ewWaitUntilTerminated, Rc) and (Rc = 0);
     Exec(ExpandConstant('{app}\bbx.exe'), 'stop', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+  end;
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM bbx-agent.exe /F', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM bbx.exe /F', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+end;
+
+// Setup stopped after PrepareToInstall (cancelled, or a file couldn't be
+// replaced): don't leave the PC unrecorded. Start the old copy again.
+procedure DeinitializeSetup();
+var
+  Rc: Integer;
+begin
+  if WasRecording and not InstallFinished and FileExists(ExpandConstant('{app}\bbx.exe')) then
+  begin
+    Exec(ExpandConstant('{app}\bbx.exe'), 'start', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+    if FileExists(ExpandConstant('{app}\bbx-agent.exe')) then
+      ExecAsOriginalUser(ExpandConstant('{app}\bbx-agent.exe'), '', '', SW_SHOWNORMAL, ewNoWait, Rc);
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -168,7 +209,10 @@ var
   Args, Log: String;
   Rc: Integer;
 begin
-  if (CurStep <> ssPostInstall) or not WizardIsComponentSelected('recorder') then
+  if CurStep <> ssPostInstall then
+    exit;
+  InstallFinished := True;
+  if not WizardIsComponentSelected('recorder') then
     exit;
   Args := 'install';
   if not WizardIsTaskSelected('evidence') then
