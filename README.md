@@ -131,7 +131,10 @@ because the recordings are readable only by administrators):
 
 That opens the viewer in your browser. For reading room, drag the bar under
 the chart, press **C** for a compact strip of event markers, or **S** to hide
-the suspects; **←/→** step the playhead 5 seconds (**Shift** for 1 minute). It has the timeline with playback, ranked suspects, black-box drill-down and screenshots. Its **Claude analysis** tab explains what happened if `ANTHROPIC_API_KEY` is set. The same analysis from the command line:
+the suspects; **←/→** step the playhead 5 seconds (**Shift** for 1 minute). It has the timeline with playback, ranked suspects, black-box drill-down and screenshots. Its **Claude analysis** tab explains what happened once it has an Anthropic API
+key: put the key (from console.anthropic.com) on one line in
+`%APPDATA%\BlackBox\anthropic.key`, next to the technician key, or set
+`ANTHROPIC_API_KEY`, which takes precedence. The same analysis from the command line:
 
 ```bash
 bbx analyze bundle.zip --question "why did the screen go black?"
@@ -168,7 +171,7 @@ Other commands:
 | `bbx view [bundle] [-i key]` | Viewer: charts, event lanes, playback, suspects, moment details, black-box rows, screenshots, Claude analysis. No bundle: asks for one. `--local --around 16:30` reads this machine (with the incident and range picker); `--idle-exit <secs>` quits once the page is closed |
 | `bbx suspects <bundle>` | Rule-based ranked causes with evidence |
 | `bbx digest <bundle> [-o file]` | The text that `analyze` would send, to review first |
-| `bbx analyze <bundle> [-q question]` | Ask Claude (`claude-opus-5-5`) what happened; needs `ANTHROPIC_API_KEY` |
+| `bbx analyze <bundle> [-q question]` | Ask Claude (`claude-opus-5-5`) what happened; needs the API key in `%APPDATA%\BlackBox\anthropic.key` or `ANTHROPIC_API_KEY` |
 | `bbx keygen` | Create the technician key in `%APPDATA%\BlackBox` (or show its public key if it exists); the `age1...` public key goes in the client setup or `config.json` `export_recipients` |
 | `bbx decrypt <bundle.age> [-i key]` | Decrypt a bundle to a plain .zip |
 | `bbx blackbox status` | ETW session state and files |

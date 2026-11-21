@@ -78,7 +78,23 @@ pub fn credentials() -> Result<Credentials> {
     if let Some(t) = std::env::var("ANTHROPIC_AUTH_TOKEN").ok().filter(|k| !k.trim().is_empty()) {
         return Ok(Credentials { header: ("authorization", format!("Bearer {}", t.trim())), oauth: true });
     }
-    bail!("set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) to use Claude analysis")
+    let file = api_key_path();
+    if let Some(k) = std::fs::read_to_string(&file).ok().as_deref().and_then(key_from_text) {
+        return Ok(Credentials { header: ("x-api-key", k), oauth: false });
+    }
+    bail!("put your Anthropic API key in {} (or set ANTHROPIC_API_KEY) to use Claude analysis", file.display())
+}
+
+/// %APPDATA%\BlackBox\anthropic.key, next to the technician key. Kept
+/// separate from it: the API key gets replaced now and then, the technician
+/// key never may, and that file stays a standard age key file.
+pub fn api_key_path() -> std::path::PathBuf {
+    crate::crypto::default_key_path().with_file_name("anthropic.key")
+}
+
+/// The first line that isn't blank or a `#` comment.
+fn key_from_text(text: &str) -> Option<String> {
+    text.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#')).map(String::from)
 }
 
 fn base_url() -> String {
@@ -245,6 +261,13 @@ pub fn read_stream(r: impl BufRead, on_text: &mut dyn FnMut(&str)) -> Result<AiR
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_key_file_skips_comments_and_blanks() {
+        assert_eq!(key_from_text("# Anthropic API key for BlackBox\n\n  sk-ant-abc123  \r\nsecond\n").as_deref(), Some("sk-ant-abc123"));
+        assert_eq!(key_from_text("\n# only a comment\n"), None);
+        assert!(api_key_path().ends_with(r"BlackBox\anthropic.key"));
+    }
 
     const SSE: &str = "event: message_start\n\
 data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-opus-5-5\",\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":30000,\"cache_creation_input_tokens\":0}}}\n\n\
