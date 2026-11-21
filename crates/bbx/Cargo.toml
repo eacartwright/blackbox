@@ -29,3 +29,6 @@ ureq.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[build-dependencies]
+winresource.workspace = true

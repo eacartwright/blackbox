@@ -30,6 +30,7 @@ OutputBaseFilename=BlackBox-Setup-{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\assets\blackbox.ico
 UninstallDisplayName=BlackBox
 UninstallDisplayIcon={app}\bbx.exe
 ChangesEnvironment=yes

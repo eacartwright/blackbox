@@ -192,18 +192,39 @@ fn copy_into(dst: &mut [u16], s: &str) {
     dst[w.len()] = 0;
 }
 
+/// Icon resource ids embedded by build.rs (assets/blackbox*.ico).
+const ICON_RECORDING: u16 = 1;
+const ICON_STOPPED: u16 = 2;
+
+/// The tray icon at the small-icon size for this display's DPI.
+fn tray_icon(recording: bool) -> HICON {
+    let id = if recording { ICON_RECORDING } else { ICON_STOPPED };
+    unsafe {
+        let (cx, cy) = (GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+        let h = LoadImageW(GetModuleHandleW(std::ptr::null()), id as usize as *const u16, IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
+        if h.is_null() {
+            LoadIconW(std::ptr::null_mut(), IDI_INFORMATION)
+        } else {
+            h as HICON
+        }
+    }
+}
+
 fn add_tray(hwnd: HWND) {
+    let recording = service::running() != Some(false);
     let mut nid = icon_data(hwnd);
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAY;
-    nid.hIcon = unsafe { LoadIconW(std::ptr::null_mut(), IDI_INFORMATION) };
-    copy_into(&mut nid.szTip, TIP_RECORDING);
+    nid.hIcon = tray_icon(recording);
+    copy_into(&mut nid.szTip, if recording { TIP_RECORDING } else { TIP_STOPPED });
     unsafe { Shell_NotifyIconW(NIM_ADD, &nid) };
 }
 
+/// Tooltip and icon (red dot / grey ring) for the recording state.
 fn set_tip(hwnd: HWND, recording: bool) {
     let mut nid = icon_data(hwnd);
-    nid.uFlags = NIF_TIP;
+    nid.uFlags = NIF_TIP | NIF_ICON;
+    nid.hIcon = tray_icon(recording);
     let tip = if recording { TIP_RECORDING } else { TIP_STOPPED };
     copy_into(&mut nid.szTip, tip);
     unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid) };

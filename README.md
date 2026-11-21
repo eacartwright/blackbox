@@ -67,7 +67,11 @@ The setup asks for administrator rights and offers two types:
 
 Either way `bbx` is added to the system PATH. Upgrading is running a newer
 setup over the old one; uninstalling (Settings > Apps) asks whether to keep
-the recordings.
+the recordings. The binaries and setup aren't code-signed yet; see
+[docs/SIGNING.md](docs/SIGNING.md).
+
+The icons are drawn by `assets/make_icons.py` (run it after changing the
+design); `build.rs` in `bbx` and `bbx-agent` embeds them.
 
 Unattended, e.g. from Intune or a script:
 
