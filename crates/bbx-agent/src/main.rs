@@ -181,8 +181,8 @@ fn main() {
 }
 
 /// Tray tooltip text (max 127 characters).
-const TIP_RECORDING: &str = "BlackBox is recording. Something went wrong? Right-click > Capture Incident (Ctrl+Alt+Shift+B)";
-const TIP_STOPPED: &str = "BlackBox is NOT recording. Right-click > Start recording to turn it back on.";
+const TIP_RECORDING: &str = "BlackBox is ON";
+const TIP_STOPPED: &str = "BlackBox is OFF";
 
 fn icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
     let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };

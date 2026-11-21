@@ -58,7 +58,9 @@ nav button.on { background: var(--panel); font-weight: 600; }
 #panel { flex: 1; overflow: auto; background: var(--panel); padding: 10px 14px; border-top: 1px solid var(--line); }
 table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+/* -10px = #panel's top padding: stick flush to the panel's edge, so rows
+   can't scroll through a gap above the header. */
+th { color: var(--muted); font-weight: 600; position: sticky; top: -10px; background: var(--panel); z-index: 1; }
 /* Several tables share one scrolling panel: a sticky header would pin to
    the panel's top and cover the other tables' rows. */
 .grid th { position: static; }
@@ -390,7 +392,7 @@ $("tabs").innerHTML = TABS.map(([k, l]) => `<button data-t="${k}">${l}</button>`
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => selectTab(b.dataset.t));
 
 function table(cols, rows) {
-  if (!rows.length) return `<div class="note">None.</div>`;
+  if (!rows.length) return `<div class="note">None</div>`;
   return `<table><tr>${cols.map(c => `<th>${esc(c[0])}</th>`).join("")}</tr>${rows.map(r => `<tr>${cols.map(c => `<td class="${c[2] || ""}">${esc(c[1](r))}</td>`).join("")}</tr>`).join("")}</table>`;
 }
 
