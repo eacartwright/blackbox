@@ -56,6 +56,11 @@ Source: "{#BinDir}\bbx-agent.exe"; DestDir: "{app}"; Flags: ignoreversion; Compo
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; \
   ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Check: NeedsAddPath(ExpandConstant('{app}'))
 
+[Icons]
+; Starts recording again (UAC prompt if it was stopped) and shows the tray icon.
+Name: "{autoprograms}\BlackBox"; Filename: "{app}\bbx-agent.exe"; Parameters: "--start"; \
+  Comment: "Start recording and show the BlackBox tray icon"; Components: recorder
+
 [UninstallDelete]
 Type: files; Name: "{app}\install.log"
 

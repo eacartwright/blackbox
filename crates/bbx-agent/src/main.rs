@@ -95,6 +95,21 @@ fn load_settings(paths: &Paths) -> AgentSettings {
 }
 
 fn main() {
+    // `--start` (the Start menu shortcut): turn recording back on first. Done
+    // before the single-instance check so it also works while the tray icon
+    // is already showing "not recording".
+    if std::env::args().any(|a| a == "--start") && service::running() == Some(false) {
+        if let Err(why) = service::run_elevated_wait(std::ptr::null_mut(), "start", 60_000) {
+            unsafe {
+                MessageBoxW(
+                    std::ptr::null_mut(),
+                    wide(&format!("BlackBox could not start recording: {why}.")).as_ptr(),
+                    wide("BlackBox").as_ptr(),
+                    MB_OK | MB_ICONWARNING,
+                );
+            }
+        }
+    }
     // One agent per session.
     let name = wide(r"Local\BlackBoxAgent");
     let _mutex = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
@@ -258,7 +273,7 @@ fn exit(hwnd: HWND) {
     unsafe {
         let ok = MessageBoxW(
             hwnd,
-            wide("Stop recording and close BlackBox?\n\nProblems that happen from now on will not be captured. BlackBox starts again the next time this PC restarts.").as_ptr(),
+            wide("Stop recording and close BlackBox?\n\nProblems that happen from now on will not be captured. BlackBox starts again the next time this PC restarts, or open BlackBox from the Start menu.").as_ptr(),
             wide("Exit BlackBox").as_ptr(),
             MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
         );
