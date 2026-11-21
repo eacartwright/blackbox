@@ -18,6 +18,12 @@ AppName=BlackBox
 AppVersion={#AppVersion}
 AppVerName=BlackBox {#AppVersion}
 AppPublisher=BlackBox
+; File properties of the setup exe (Details tab); without this the file
+; version shows 0.0.0.0.
+VersionInfoVersion={#AppVersion}
+VersionInfoProductVersion={#AppVersion}
+VersionInfoProductName=BlackBox
+VersionInfoDescription=BlackBox Setup
 ; bbx install expects %ProgramFiles%\BlackBox; keep the folder fixed.
 DefaultDirName={autopf}\BlackBox
 DisableDirPage=yes
