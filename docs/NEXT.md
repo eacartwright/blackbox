@@ -89,6 +89,7 @@ All user-facing text of the tray agent is in `crates/bbx-agent/src/main.rs`:
 | Tooltip when recording / stopped | `TIP_RECORDING`, `TIP_STOPPED` constants |
 | "Recording stopped / started" notifications | `on_tick()`: the `balloon(...)` after the service-state check |
 | "About BlackBox" dialog | `show_menu()`: the `MessageBoxW(...)` text and title |
+| "Exit…" confirmation and "still running" notification | `exit()` |
 | Notification after "It just happened" | `mark()`: `balloon(a.hwnd, "<title>", "<text>")` (title max 63, text max 255 characters) |
 | The hotkey (Ctrl+Alt+Shift+B) | `main()`: `RegisterHotKey(...)`; update the tooltip and menu text to match |
 

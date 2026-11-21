@@ -38,7 +38,7 @@ const HOTKEY_ID: i32 = 1;
 const CMD_MARK: usize = 100;
 const CMD_ABOUT: usize = 101;
 const CMD_TOGGLE: usize = 102;
-const CMD_HIDE: usize = 103;
+const CMD_EXIT: usize = 103;
 const ERROR_ALREADY_EXISTS: u32 = 183;
 const DEVICE_NOTIFY_WINDOW_HANDLE: u32 = 0;
 const PBT_APMSUSPEND: usize = 0x4;
@@ -222,9 +222,9 @@ fn show_menu(hwnd: HWND) {
         if let Some(t) = toggle {
             AppendMenuW(menu, MF_STRING, CMD_TOGGLE, wide(t).as_ptr());
         }
-        AppendMenuW(menu, MF_STRING, CMD_HIDE, wide("Hide tray icon (recording continues)").as_ptr());
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         AppendMenuW(menu, MF_STRING, CMD_ABOUT, wide("About BlackBox").as_ptr());
+        AppendMenuW(menu, MF_STRING, CMD_EXIT, wide("Exit…").as_ptr());
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
         SetForegroundWindow(hwnd);
@@ -238,9 +238,7 @@ fn show_menu(hwnd: HWND) {
                     balloon(hwnd, "BlackBox", "Not changed: administrator approval is needed to stop or start recording.");
                 }
             }
-            CMD_HIDE => {
-                DestroyWindow(hwnd);
-            }
+            CMD_EXIT => exit(hwnd),
             CMD_ABOUT => {
                 MessageBoxW(
                     hwnd,
@@ -252,6 +250,31 @@ fn show_menu(hwnd: HWND) {
             _ => {}
         }
     }
+}
+
+/// Tray "Exit": stop recording (service and black box, behind UAC), then
+/// close the tray agent. Both come back at the next restart / sign-in.
+fn exit(hwnd: HWND) {
+    unsafe {
+        let ok = MessageBoxW(
+            hwnd,
+            wide("Stop recording and close BlackBox?\n\nProblems that happen from now on will not be captured. BlackBox starts again the next time this PC restarts.").as_ptr(),
+            wide("Exit BlackBox").as_ptr(),
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
+        );
+        if ok != IDYES {
+            return;
+        }
+    }
+    if service::running() == Some(true) {
+        // Waiting blocks our message loop; don't log that as a desktop stall.
+        with_agent(|a| a.quiet_until = Instant::now() + Duration::from_secs(90));
+        if let Err(why) = service::run_elevated_wait(hwnd, "stop", 60_000) {
+            balloon(hwnd, "BlackBox is still running", &format!("Not stopped: {why}."));
+            return;
+        }
+    }
+    unsafe { DestroyWindow(hwnd) };
 }
 
 fn mark() {

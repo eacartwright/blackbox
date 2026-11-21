@@ -147,7 +147,7 @@ Other commands:
 | `bbx decrypt <bundle.age> -i blackbox-tech.key` | Open an encrypted bundle |
 | `bbx blackbox status` | ETW session state and files |
 | `bbx run --for-secs 60` | Record in the foreground (testing; no black box unless elevated) |
-| `bbx stop` / `bbx start` | Stop recording (service and both ETW sessions) / start again; elevated. Also in the tray menu, behind a UAC prompt |
+| `bbx stop` / `bbx start` | Stop recording (service and both ETW sessions) / start again; elevated. Also in the tray menu, behind a UAC prompt. Tray **Exit…** stops recording and closes the tray icon; both return at the next restart |
 | `bbx uninstall [--purge]` | Remove the service and black box (and optionally all data) |
 
 Users can also press **Ctrl+Alt+Shift+B**, or right-click the tray icon >
