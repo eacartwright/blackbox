@@ -48,10 +48,11 @@ list for the next session.
 
 ## 3. Next features (bigger)
 
-1. **Code signing and packaging.** Sign `bbx.exe` and `bbx-agent.exe` so
-   EDR and SmartScreen don't block them, and ship an MSI or a single
-   installer exe. Add GitHub Actions to build, test and attach release
-   binaries.
+1. **Code signing and release builds.** A setup exe exists
+   (`installer\blackbox.iss`, built by `scripts\build-installer.ps1`). Still
+   to do: sign `bbx.exe`, `bbx-agent.exe` and the setup so EDR and
+   SmartScreen don't block them (needs a code-signing certificate), and add
+   GitHub Actions to build, test and attach the setup to releases.
 2. **Fleet use.** Optional upload of encrypted incident bundles to a
    location the technician controls (a share, S3 or Azure blob), plus a
    simple inbox in the viewer.

@@ -38,6 +38,10 @@ enum Cmd {
         /// Register the service but don't start it.
         #[arg(long)]
         no_start: bool,
+        /// Technician public key (age1...) that exports are encrypted for.
+        /// Added to export_recipients in config.json. Repeatable.
+        #[arg(long = "recipient")]
+        recipients: Vec<String>,
     },
     /// Stop recording: stops the service and both ETW sessions. Run elevated.
     Stop,
@@ -249,10 +253,11 @@ fn load(src: &Source) -> Result<dataset::Dataset> {
 fn main() {
     let args = Args::parse();
     let res: Result<()> = match args.cmd {
-        Cmd::Install { profile, no_system_changes, no_start } => install::install(install::InstallOptions {
+        Cmd::Install { profile, no_system_changes, no_start, recipients } => install::install(install::InstallOptions {
             profile,
             system_changes: !no_system_changes,
             start: !no_start,
+            recipients,
         }),
         Cmd::Uninstall { purge } => install::uninstall(purge),
         Cmd::Stop => install::stop_recording(),

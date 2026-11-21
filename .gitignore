@@ -3,3 +3,4 @@
 *.bbj
 *.bbjz
 /testdata-out
+/dist

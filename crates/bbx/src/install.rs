@@ -19,6 +19,8 @@ pub struct InstallOptions {
     pub profile: Option<String>,
     pub system_changes: bool,
     pub start: bool,
+    /// age public keys to add to `export_recipients`.
+    pub recipients: Vec<String>,
 }
 
 pub fn is_elevated() -> bool {
@@ -145,6 +147,9 @@ fn wait_for_state(svc: &windows_service::service::Service, want: ServiceState, t
 
 pub fn install(opts: InstallOptions) -> Result<()> {
     require_admin()?;
+    // Reject a mistyped key before changing anything.
+    let recipients: Vec<String> = opts.recipients.iter().map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect();
+    crate::crypto::parse_recipients(&recipients)?;
     let paths = Paths::from_env();
     let mgr = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)?;
 
@@ -161,7 +166,8 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     }
 
     // 1. Program files (stop user agents first: their exe would be locked).
-    run("taskkill", &["/IM", "bbx-agent.exe", "/F"]);
+    //    Not running is the normal case, so don't report a failure.
+    let _ = Command::new("taskkill").args(["/IM", "bbx-agent.exe", "/F"]).output();
     kill_installed_bbx();
     let dir = install_dir();
     std::fs::create_dir_all(&dir)?;
@@ -213,7 +219,17 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     if let Some(p) = &opts.profile {
         cfg.profile = p.clone();
     }
-    if !cfg_path.exists() || opts.profile.is_some() {
+    let mut added_key = false;
+    for r in &recipients {
+        if !cfg.export_recipients.contains(r) {
+            cfg.export_recipients.push(r.clone());
+            added_key = true;
+        }
+    }
+    if added_key {
+        println!("Exports will be encrypted for: {}", cfg.export_recipients.join(", "));
+    }
+    if !cfg_path.exists() || opts.profile.is_some() || added_key {
         std::fs::write(&cfg_path, serde_json::to_vec_pretty(&cfg)?)?;
         println!("Wrote {}", cfg_path.display());
     }

@@ -49,12 +49,42 @@ dependencies.
 cargo test --workspace
 ```
 
+### Setup program
+
+```powershell
+.\scripts\build-installer.ps1
+```
+
+Builds, tests and packages `dist\BlackBox-Setup-<version>.exe` (needs
+[Inno Setup 6](https://jrsoftware.org/isinfo.php): `winget install JRSoftware.InnoSetup`).
+The setup asks for administrator rights and offers two types:
+
+- **Record this PC**: the service, tray icon and tools. It asks for the
+  technician's public key (from `bbx keygen`) so every export is encrypted for
+  you, and whether to turn on the extra Windows evidence listed below.
+- **Technician tools only**: `bbx` for opening, viewing and analyzing bundles
+  on your own computer, with no recording.
+
+Either way `bbx` is added to the system PATH. Upgrading is running a newer
+setup over the old one; uninstalling (Settings > Apps) asks whether to keep
+the recordings.
+
+Unattended, e.g. from Intune or a script:
+
+```powershell
+BlackBox-Setup-0.1.0.exe /VERYSILENT /RECIPIENT=age1...
+```
+
+Add `/MERGETASKS="!evidence"` to leave Windows logging settings alone, or
+`/TYPE=technician` for the tools only.
+
 ## Use
 
-From an elevated (Administrator) prompt on the machine to watch:
+The setup program above does this for you. By hand, from an elevated
+(Administrator) prompt on the machine to watch:
 
 ```bash
-bbx install
+bbx install [--recipient age1...]
 ```
 
 This copies `bbx.exe` and `bbx-agent.exe` to `C:\Program Files\BlackBox`,
