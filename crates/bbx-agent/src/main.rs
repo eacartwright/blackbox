@@ -43,6 +43,8 @@ const CMD_VIEW: usize = 104;
 const CMD_SEND: usize = 105;
 /// Posted by the "Send to technician" worker thread when the export ends.
 const WM_EXPORT_DONE: u32 = WM_APP + 2;
+/// Posted when the elevated viewer has said where its page is.
+const WM_VIEW_READY: u32 = WM_APP + 3;
 const ERROR_ALREADY_EXISTS: u32 = 183;
 const DEVICE_NOTIFY_WINDOW_HANDLE: u32 = 0;
 const PBT_APMSUSPEND: usize = 0x4;
@@ -284,12 +286,7 @@ fn show_menu(hwnd: HWND) {
                 }
             }
             CMD_EXIT => exit(hwnd),
-            CMD_VIEW => {
-                // Runs hidden; it quits 10 minutes after the browser page closes.
-                if !service::run_elevated(hwnd, "view --local --idle-exit 600") {
-                    balloon(hwnd, "BlackBox", "Not opened: administrator approval is needed to view the recordings.");
-                }
-            }
+            CMD_VIEW => view_recordings(hwnd),
             CMD_SEND => send_to_technician(hwnd),
             CMD_ABOUT => {
                 MessageBoxW(
@@ -327,6 +324,59 @@ fn exit(hwnd: HWND) {
         }
     }
     unsafe { DestroyWindow(hwnd) };
+}
+
+static VIEW_RESULT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Tray "View recordings": start the viewer elevated (it must read the
+/// recordings) without a browser, wait for it to write its page address to
+/// a file, then open that address as this user. An elevated process can't
+/// open the user's browser (explorer.exe just shows Documents).
+fn view_recordings(hwnd: HWND) {
+    let file = std::env::temp_dir().join(format!("blackbox-view-{}-{}.txt", std::process::id(), local_stamp()));
+    let _ = std::fs::remove_file(&file);
+    // Runs hidden; it quits 10 minutes after the browser page closes.
+    let args = format!("view --local --idle-exit 600 --url-file \"{}\"", file.display());
+    if !service::run_elevated(hwnd, &args) {
+        balloon(hwnd, "BlackBox", "Not opened: administrator approval is needed to view the recordings.");
+        return;
+    }
+    let hwnd_v = hwnd as isize;
+    std::thread::spawn(move || {
+        let t0 = Instant::now();
+        let text = loop {
+            if let Ok(s) = std::fs::read_to_string(&file) {
+                let _ = std::fs::remove_file(&file);
+                break s.trim().to_string();
+            }
+            if t0.elapsed() > Duration::from_secs(120) {
+                break "ERROR: the viewer did not start".to_string();
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        };
+        *VIEW_RESULT.lock().unwrap() = Some(text);
+        unsafe { PostMessageW(hwnd_v as HWND, WM_VIEW_READY, 0, 0) };
+    });
+}
+
+fn view_ready(hwnd: HWND) {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    let Some(text) = VIEW_RESULT.lock().unwrap().take() else { return };
+    unsafe {
+        if text.starts_with("http://127.0.0.1:") {
+            ShellExecuteW(hwnd, wide("open").as_ptr(), wide(&text).as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL);
+        } else if text == "EMPTY" {
+            MessageBoxW(
+                hwnd,
+                wide("BlackBox hasn't recorded anything on this PC yet.\n\nIt starts recording as soon as it's installed; try again in a minute.").as_ptr(),
+                wide("View recordings").as_ptr(),
+                MB_OK | MB_ICONINFORMATION,
+            );
+        } else {
+            let why = text.strip_prefix("ERROR: ").unwrap_or(&text);
+            MessageBoxW(hwnd, wide(&format!("The recordings could not be opened.\n\n{why}")).as_ptr(), wide("View recordings").as_ptr(), MB_OK | MB_ICONWARNING);
+        }
+    }
 }
 
 static EXPORTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -477,6 +527,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_TIMER if wp == TIMER_ID => on_tick(),
         WM_EXPORT_DONE => export_done(hwnd),
+        WM_VIEW_READY => view_ready(hwnd),
         WM_HOTKEY if wp as i32 == HOTKEY_ID => mark(),
         WM_TRAY => match lp as u32 {
             WM_RBUTTONUP | WM_CONTEXTMENU | WM_LBUTTONDBLCLK => show_menu(hwnd),

@@ -33,6 +33,18 @@ pub struct ViewOptions {
     /// Quit when no page has talked to us for this long (the open page
     /// pings every minute).
     pub idle_exit: Option<std::time::Duration>,
+    /// Hand the page address to whoever started us (see `write_url_file`).
+    pub url_file: Option<PathBuf>,
+}
+
+/// Write one line for the tray agent: the page address, "EMPTY", or
+/// "ERROR: ...". Written whole and then renamed, so the agent never reads
+/// half a line.
+pub fn write_url_file(path: &std::path::Path, text: &str) {
+    let tmp = path.with_extension("tmp");
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
 }
 
 /// The running viewer. The loaded dataset can be swapped (local mode).
@@ -106,7 +118,9 @@ pub fn serve(ds: Dataset, opts: ViewOptions) -> Result<()> {
         loading: Mutex::new(()),
         last_request: Mutex::new(std::time::Instant::now()),
     });
-    if opts.open_browser {
+    if let Some(f) = &opts.url_file {
+        write_url_file(f, &url);
+    } else if opts.open_browser {
         std::process::Command::new("explorer.exe").arg(&url).spawn().ok();
     }
     if let Some(limit) = opts.idle_exit {

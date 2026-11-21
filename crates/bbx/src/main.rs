@@ -170,6 +170,11 @@ enum Cmd {
         /// "View recordings" runs it hidden). 0 = keep running.
         #[arg(long, default_value_t = 0)]
         idle_exit: u64,
+        /// Write the page address (or "EMPTY" / "ERROR: ...") to this file
+        /// instead of opening a browser. The tray uses it: an elevated
+        /// process can't open the user's browser.
+        #[arg(long, hide = true)]
+        url_file: Option<std::path::PathBuf>,
     },
     /// Print the rule-based suspects for a bundle.
     Suspects {
@@ -327,11 +332,28 @@ fn main() {
             crypto::read_identities(&identity).and_then(|ids| crypto::decrypt_file(&file, &out, &ids)).map(|_| println!("Wrote {}", out.display()))
         }
         Cmd::Incidents => cli::incidents(),
-        Cmd::View { src, port, no_browser, model, idle_exit } => {
+        Cmd::View { src, port, no_browser, model, idle_exit, url_file } => (|| -> Result<()> {
             let local = src.local.then(bbx_core::paths::Paths::from_env);
             let idle_exit = (idle_exit > 0).then(|| std::time::Duration::from_secs(idle_exit));
-            load(&src).and_then(|ds| viewer::serve(ds, viewer::ViewOptions { port, open_browser: !no_browser, model, local, idle_exit }))
-        }
+            let ds = match load(&src) {
+                Ok(ds) => ds,
+                Err(e) => {
+                    if let Some(f) = &url_file {
+                        viewer::write_url_file(f, &format!("ERROR: {e:#}"));
+                    }
+                    return Err(e);
+                }
+            };
+            // Nothing recorded at all yet: say so rather than show an empty page.
+            if let (Some(f), Some(paths)) = (&url_file, &local) {
+                if ds.records.is_empty() && dataset::list_incidents(paths).is_empty() {
+                    viewer::write_url_file(f, "EMPTY");
+                    return Ok(());
+                }
+            }
+            let open_browser = !no_browser && url_file.is_none();
+            viewer::serve(ds, viewer::ViewOptions { port, open_browser, model, local, idle_exit, url_file })
+        })(),
         Cmd::Suspects { src } => load(&src).map(|ds| print!("{}", suspects::to_text(&suspects::analyze(&ds)))),
         Cmd::Digest { src, out } => load(&src).and_then(|ds| {
             let d = digest::build(&ds, &suspects::analyze(&ds));
