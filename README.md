@@ -129,7 +129,9 @@ because the recordings are readable only by administrators):
 2. Double-click a `.zip.age` bundle, or use **BlackBox Viewer** in the Start menu
    to pick one. The key is found automatically; `-i <key>` still works.
 
-That opens the viewer in your browser. It has the timeline with playback, ranked suspects, black-box drill-down and screenshots. Its **Claude analysis** tab explains what happened if `ANTHROPIC_API_KEY` is set. The same analysis from the command line:
+That opens the viewer in your browser. For reading room, drag the bar under
+the chart, press **C** for a compact strip of event markers, or **S** to hide
+the suspects; **←/→** step the playhead 5 seconds (**Shift** for 1 minute). It has the timeline with playback, ranked suspects, black-box drill-down and screenshots. Its **Claude analysis** tab explains what happened if `ANTHROPIC_API_KEY` is set. The same analysis from the command line:
 
 ```bash
 bbx analyze bundle.zip --question "why did the screen go black?"

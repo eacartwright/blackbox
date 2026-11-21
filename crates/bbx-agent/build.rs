@@ -2,6 +2,7 @@
 // exe's own icon; resource 2 is shown while recording is stopped.
 // Keep the ids in sync with ICON_RECORDING / ICON_STOPPED in main.rs.
 fn main() {
+    println!("cargo:rerun-if-changed=Cargo.toml"); // version info (package.metadata.winresource)
     println!("cargo:rerun-if-changed=../../assets/blackbox.ico");
     println!("cargo:rerun-if-changed=../../assets/blackbox-stopped.ico");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {

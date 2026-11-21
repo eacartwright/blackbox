@@ -32,3 +32,8 @@ tempfile.workspace = true
 
 [build-dependencies]
 winresource.workspace = true
+
+# Shown in Task Manager and the file's Properties > Details.
+[package.metadata.winresource]
+ProductName = "BlackBox"
+FileDescription = "BlackBox flight recorder"

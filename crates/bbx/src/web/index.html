@@ -18,6 +18,12 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 "Segoe UI", system-ui, sans-serif; }
+body { display: flex; flex-direction: column; }
+body.nosus aside { display: none; }
+header button.on { background: var(--soft); border-color: var(--accent); }
+#keys { color: var(--muted); font-size: 12px; cursor: help; }
+#split { height: 6px; flex: none; cursor: row-resize; background: var(--line); }
+#split:hover, #split.drag { background: var(--accent); }
 header { display: flex; align-items: center; gap: 14px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .brand { font-weight: 700; font-size: 15px; letter-spacing: .3px; }
 #meta { color: var(--muted); }
@@ -29,7 +35,7 @@ button, select, input[type=text], input[type=number], input[type=datetime-local]
 button { cursor: pointer; } button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 #clock { font-family: var(--mono); min-width: 190px; text-align: right; }
-main { display: flex; height: calc(100% - 46px); }
+main { display: flex; flex: 1; min-height: 0; }
 aside { width: 330px; min-width: 260px; border-right: 1px solid var(--line); overflow: auto; background: var(--panel); }
 aside h2 { margin: 10px 12px 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
 .sus { margin: 6px 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
@@ -43,7 +49,7 @@ aside h2 { margin: 10px 12px 6px; font-size: 13px; text-transform: uppercase; le
 .bar { height: 3px; background: var(--soft); border-radius: 2px; margin-top: 6px; }
 .bar > div { height: 3px; border-radius: 2px; }
 #center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-#chartwrap { position: relative; background: var(--panel); border-bottom: 1px solid var(--line); }
+#chartwrap { position: relative; flex: none; background: var(--panel); }
 #chart { display: block; width: 100%; cursor: crosshair; }
 #tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; max-width: 460px; box-shadow: 0 4px 14px rgba(0,0,0,.15); display: none; white-space: pre-wrap; z-index: 5; }
 nav { display: flex; gap: 2px; padding: 6px 10px 0; background: var(--bg); }
@@ -53,9 +59,17 @@ nav button.on { background: var(--panel); font-weight: 600; }
 table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
-td.n { text-align: right; font-family: var(--mono); }
+/* Several tables share one scrolling panel: a sticky header would pin to
+   the panel's top and cover the other tables' rows. */
+.grid th { position: static; }
+td { overflow-wrap: break-word; }
+/* Long text (paths, keys, details) wraps anywhere; everything else keeps its width. */
+td.w { overflow-wrap: anywhere; min-width: 14em; }
+td.n { text-align: right; font-family: var(--mono); white-space: nowrap; }
+td.m { white-space: nowrap; }
 td.m, .m { font-family: var(--mono); }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr)); gap: 18px; }
+.card { min-width: 0; }
 .card h3 { margin: 4px 0 6px; font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: .5px; }
 .sev0 { color: var(--muted); } .sev1 { color: var(--warn); } .sev2 { color: var(--err); } .sev3 { color: var(--crit); font-weight: 600; }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
@@ -84,16 +98,20 @@ pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; margin: 
     <span id="custom" hidden><input type="datetime-local" id="cfrom" aria-label="From"> → <input type="datetime-local" id="cto" aria-label="To"> <button id="cload">Show</button></span>
   </span>
   <div class="controls">
+    <button id="sus" title="Show or hide the suspects column (S)">Hide suspects</button>
+    <button id="compact" title="Shrink the chart to a thin strip of events (C)">Compact chart</button>
     <button id="play" title="Play from the playhead">▶ Play</button>
     <select id="speed" title="Playback speed"><option value="1">1×</option><option value="10" selected>10×</option><option value="60">60×</option><option value="300">300×</option></select>
     <button id="full" title="Show the whole recording">Full range</button>
     <span id="clock"></span>
+    <span id="keys" title="← / → : step the playhead 5 seconds&#10;Shift + ← / → : step 1 minute&#10;C : compact or full chart&#10;S : show or hide suspects&#10;Drag the bar under the chart to resize it; double-click it to toggle compact">⌨ keys</span>
   </div>
 </header>
 <main>
   <aside><h2>Suspects</h2><div id="suspects"><div class="empty">…</div></div></aside>
   <section id="center">
     <div id="chartwrap"><canvas id="chart"></canvas><div id="tip"></div></div>
+    <div id="split" title="Drag to resize the chart; double-click for a compact strip"></div>
     <nav id="tabs"></nav>
     <div id="panel"></div>
   </section>
@@ -122,17 +140,78 @@ const PANELS = [
   { key: "gpu", label: "GPU %", src: "pdh", max: 100, color: "--c5" },
   { key: "late", label: "Heartbeat late ms", src: "hb", log: true, color: "--c7" },
 ];
-const PANEL_H = 46, LANE_H = 16, AXIS_H = 18, LEFT = 128;
+const PANEL_FULL = 46, PANEL_MIN = 16, LANE_H = 16, AXIS_H = 18, LEFT = 128, STRIP_H = 22;
+// The chart's height is the reader's choice (the bar under it), and it can
+// shrink to a strip of event markers so the details get the room.
+let panelH = PANEL_FULL, compact = false, chartH = null;
+const fixedH = () => LANES.length * LANE_H + AXIS_H + 6;
+const fullH = () => PANELS.length * PANEL_FULL + fixedH();
+const minH = () => PANELS.length * PANEL_MIN + fixedH();
+const pref = {
+  get: k => { try { return localStorage.getItem("bbx." + k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem("bbx." + k, v); } catch { } },
+};
 
 // ------------------------------------------------------------ chart
 const cv = $("chart"), ctx = cv.getContext("2d");
 function layout() {
-  const h = PANELS.length * PANEL_H + LANES.length * LANE_H + AXIS_H + 6;
+  let h;
+  if (compact) h = STRIP_H + AXIS_H + 6;
+  else {
+    h = Math.round(Math.min(Math.max(chartH ?? fullH(), minH()), Math.max(minH(), innerHeight * .75)));
+    panelH = Math.floor((h - fixedH()) / PANELS.length);
+  }
   cv.style.height = h + "px";
   cv.width = cv.clientWidth * devicePixelRatio; cv.height = h * devicePixelRatio;
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   draw();
 }
+function setCompact(v) {
+  compact = v;
+  const b = $("compact"); b.classList.toggle("on", v); b.textContent = v ? "Full chart" : "Compact chart";
+  pref.set("compact", v ? "1" : "0");
+  layout();
+}
+function setSuspects(show) {
+  document.body.classList.toggle("nosus", !show);
+  const b = $("sus"); b.textContent = show ? "Hide suspects" : "Show suspects"; b.classList.toggle("on", !show);
+  pref.set("suspects", show ? "1" : "0");
+  layout();
+}
+$("compact").onclick = () => setCompact(!compact);
+$("sus").onclick = () => setSuspects(document.body.classList.contains("nosus"));
+
+// The bar under the chart: drag to resize, double-click for the strip.
+let sdrag = null;
+$("split").addEventListener("mousedown", e => { sdrag = { y0: e.clientY, h0: cv.clientHeight }; $("split").classList.add("drag"); e.preventDefault(); });
+$("split").addEventListener("dblclick", () => setCompact(!compact));
+window.addEventListener("mousemove", e => {
+  if (!sdrag) return;
+  const h = sdrag.h0 + e.clientY - sdrag.y0;
+  if (h < minH() * .6) { if (!compact) setCompact(true); }
+  else { if (compact) setCompact(false); chartH = Math.max(h, minH()); layout(); }
+});
+window.addEventListener("mouseup", () => {
+  if (!sdrag) return;
+  sdrag = null; $("split").classList.remove("drag");
+  if (chartH) pref.set("chartH", String(Math.round(chartH)));
+});
+
+// Keys: step through moments while reading.
+window.addEventListener("keydown", e => {
+  if (e.ctrlKey || e.metaKey || e.altKey || (e.target.closest && e.target.closest("input, select, textarea"))) return;
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    if (!INFO) return;
+    e.preventDefault();
+    const step = (e.shiftKey ? 60e3 : 5e3) * (e.key === "ArrowLeft" ? -1 : 1);
+    const t = Math.min(INFO.to, Math.max(INFO.from, (playhead || view.from) + step));
+    const w = view.to - view.from;
+    if (t > view.to) view = { from: t - w * .8, to: t + w * .2 };
+    else if (t < view.from) view = { from: t - w * .2, to: t + w * .8 };
+    setPlayhead(t, true);
+  } else if (e.key === "c" || e.key === "C") setCompact(!compact);
+  else if (e.key === "s" || e.key === "S") setSuspects(document.body.classList.contains("nosus"));
+});
 const W = () => cv.clientWidth;
 const xOf = t => LEFT + (t - view.from) / (view.to - view.from) * (W() - LEFT - 8);
 const tOf = x => view.from + (x - LEFT) / (W() - LEFT - 8) * (view.to - view.from);
@@ -151,16 +230,22 @@ function drawSeries(p, y0) {
     ctx.beginPath(); let started = false;
     for (let i = a; i < b; i++) {
       const v = vals[i]; if (v == null) { started = false; continue; }
-      const x = xOf(ts[i]), y = y0 + PANEL_H - 4 - scale(v) * (PANEL_H - 10);
+      const x = xOf(ts[i]), y = y0 + panelH - 4 - scale(v) * (panelH - 10);
       if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
     }
     ctx.strokeStyle = color; ctx.lineWidth = 1.3; ctx.stroke();
-    if (fill) { ctx.lineTo(xOf(ts[b - 1] ?? view.to), y0 + PANEL_H - 4); ctx.lineTo(xOf(ts[a] ?? view.from), y0 + PANEL_H - 4); ctx.closePath(); ctx.globalAlpha = .12; ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha = 1; }
+    if (fill) { ctx.lineTo(xOf(ts[b - 1] ?? view.to), y0 + panelH - 4); ctx.lineTo(xOf(ts[a] ?? view.from), y0 + panelH - 4); ctx.closePath(); ctx.globalAlpha = .12; ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha = 1; }
   };
   if (p.extra) plot(s[p.extra], css("--c7"), false);
   plot(vs, css(p.color), true);
   ctx.fillStyle = css("--muted"); ctx.font = "10px Segoe UI"; ctx.textAlign = "right";
-  ctx.fillText(num(max), LEFT - 6, y0 + 12);
+  if (panelH >= 30) ctx.fillText(num(max), LEFT - 6, y0 + 12);
+}
+
+function drawMarker(e, y, h) {
+  const x = xOf(e.t); ctx.fillStyle = sevColor(e.sev);
+  if (e.lane === "incident") { const m = y + h / 2; ctx.beginPath(); ctx.moveTo(x, m - 6); ctx.lineTo(x + 5, m); ctx.lineTo(x, m + 6); ctx.lineTo(x - 5, m); ctx.fill(); }
+  else ctx.fillRect(x - 1, y + 3 + (e.sev ? 0 : 3), e.sev ? 3 : 2, e.sev ? h - 6 : h - 10);
 }
 
 function draw() {
@@ -169,22 +254,27 @@ function draw() {
   ctx.clearRect(0, 0, w, H);
   ctx.font = "11px Segoe UI";
   let y = 2;
-  for (const p of PANELS) {
-    ctx.fillStyle = css("--soft"); ctx.fillRect(LEFT, y, w - LEFT - 8, PANEL_H - 2);
-    ctx.fillStyle = css("--ink"); ctx.textAlign = "left"; ctx.fillText(p.label, 8, y + 26);
-    drawSeries(p, y);
-    p.y = y; y += PANEL_H;
-  }
-  for (const [lane, label] of LANES) {
-    ctx.fillStyle = css("--ink"); ctx.textAlign = "left"; ctx.fillText(label, 8, y + 12);
-    ctx.strokeStyle = css("--line"); ctx.beginPath(); ctx.moveTo(LEFT, y + LANE_H - .5); ctx.lineTo(w - 8, y + LANE_H - .5); ctx.stroke();
-    for (const e of EVENTS) {
-      if (e.lane !== lane || e.t < view.from || e.t > view.to) continue;
-      const x = xOf(e.t); ctx.fillStyle = sevColor(e.sev);
-      if (lane === "incident") { ctx.beginPath(); ctx.moveTo(x, y + 2); ctx.lineTo(x + 5, y + 8); ctx.lineTo(x, y + 14); ctx.lineTo(x - 5, y + 8); ctx.fill(); }
-      else ctx.fillRect(x - 1, y + 3 + (e.sev ? 0 : 3), e.sev ? 3 : 2, e.sev ? 10 : 6);
+  if (compact) {
+    // One strip with every lane's markers; incidents drawn last, on top.
+    ctx.fillStyle = css("--ink"); ctx.textAlign = "left"; ctx.fillText("Events", 8, y + 15);
+    ctx.strokeStyle = css("--line"); ctx.beginPath(); ctx.moveTo(LEFT, y + STRIP_H - .5); ctx.lineTo(w - 8, y + STRIP_H - .5); ctx.stroke();
+    const vis = EVENTS.filter(e => e.t >= view.from && e.t <= view.to);
+    for (const e of vis) if (e.lane !== "incident") drawMarker(e, y, STRIP_H);
+    for (const e of vis) if (e.lane === "incident") drawMarker(e, y, STRIP_H);
+    y += STRIP_H;
+  } else {
+    for (const p of PANELS) {
+      ctx.fillStyle = css("--soft"); ctx.fillRect(LEFT, y, w - LEFT - 8, panelH - 2);
+      ctx.fillStyle = css("--ink"); ctx.textAlign = "left"; ctx.fillText(p.label, 8, y + Math.min(26, panelH / 2 + 4));
+      drawSeries(p, y);
+      p.y = y; y += panelH;
     }
-    y += LANE_H;
+    for (const [lane, label] of LANES) {
+      ctx.fillStyle = css("--ink"); ctx.textAlign = "left"; ctx.fillText(label, 8, y + 12);
+      ctx.strokeStyle = css("--line"); ctx.beginPath(); ctx.moveTo(LEFT, y + LANE_H - .5); ctx.lineTo(w - 8, y + LANE_H - .5); ctx.stroke();
+      for (const e of EVENTS) if (e.lane === lane && e.t >= view.from && e.t <= view.to) drawMarker(e, y, LANE_H);
+      y += LANE_H;
+    }
   }
   // time axis
   ctx.fillStyle = css("--muted"); ctx.textAlign = "center";
@@ -203,7 +293,13 @@ function draw() {
 
 function valueAt(src, key, t) { const s = SERIES[src]; if (!s || !s.t.length) return null; const i = Math.min(s.t.length - 1, bisect(s.t, t)); return s[key][i]; }
 function markerAt(x, y) {
-  let ly = PANELS.length * PANEL_H + 2;
+  if (compact) {
+    if (y < 2 || y >= 2 + STRIP_H) return null;
+    let best = null, bd = 6;
+    for (const e of EVENTS) { const d = Math.abs(xOf(e.t) - x); if (d < bd || (d === bd && e.lane === "incident")) { bd = d; best = e; } }
+    return best;
+  }
+  let ly = PANELS.length * panelH + 2;
   for (const [lane] of LANES) {
     if (y >= ly && y < ly + LANE_H) {
       let best = null, bd = 6;
@@ -251,7 +347,7 @@ let momentTimer = null;
 function setPlayhead(t, quiet) {
   playhead = t; draw();
   clearTimeout(momentTimer);
-  momentTimer = setTimeout(() => { if (["moment", "screens"].includes(tab)) renderTab(); }, quiet ? 600 : 50);
+  momentTimer = setTimeout(() => { if (["moment", "screens"].includes(tab)) renderTab(); }, quiet ? 300 : 50);
 }
 
 $("full").onclick = () => setView(INFO.from, INFO.to);
@@ -307,12 +403,12 @@ async function renderMoment(p) {
   <div class="toolbar"><b>${fmtD(m.t)}</b>${v ? `<span>CPU ${num(v.cpu)}% · commit ${num(v.commit)}% · free ${num(v.avail)} MB · disk ${num(v.disk_ms, 1)} ms (queue ${num(v.queue, 1)}) · heartbeat ${num(v.late)} ms late</span>` : `<span class="note">No heartbeat near this moment.</span>`}</div>
   <div class="grid">
    <div class="card"><h3>Processes (nearest sample)</h3>${table([["Process", r => r.name], ["PID", r => r.pid, "n"], ["CPU %", r => num(r.cpu, 1), "n"], ["Private MB", r => num(r.private_mb), "n"], ["Working set MB", r => num(r.ws_mb), "n"], ["Handles", r => num(r.handles), "n"], ["I/O KB/s", r => num(r.io_kbs), "n"]], m.procs)}</div>
-   <div class="card"><h3>Events ±5 s</h3>${table([["Time", e => fmtT(e.t, true), "m"], ["What", e => e.title], ["Detail", e => e.detail]], m.events)}</div>
-   <div class="card"><h3>Slowest disk I/O</h3>${table([["Max ms", r => num(r.max_ms, 1), "n"], ["Process", r => `${r.proc}(${r.pid})`], ["File", r => r.file], ["R/W", r => `${r.reads}/${r.writes}`, "n"]], sortBy(m.disk, r => r.max_ms).slice(0, 15))}</div>
-   <div class="card"><h3>Files written / deleted</h3>${table([["Process", r => r.proc], ["Path", r => r.path], ["KB", r => num(r.write_bytes / 1024), "n"], ["New/Del/Ren", r => `${r.creates}/${r.deletes}/${r.renames}`, "n"]], sortBy(m.files, r => r.write_bytes + 4096 * (r.deletes + r.renames)).slice(0, 15))}</div>
-   <div class="card"><h3>Registry writes</h3>${table([["Process", r => r.proc], ["Key", r => r.key + (r.value ? " : " + r.value : "")], ["Set/New/Del", r => `${r.sets}/${r.creates}/${r.deletes}`, "n"]], m.registry.slice(0, 15))}</div>
-   <div class="card"><h3>Network</h3>${table([["Process", r => r.proc], ["Remote", r => `${r.proto} ${r.remote}`], ["Sent KB", r => num(r.sent / 1024), "n"], ["Recv KB", r => num(r.recv / 1024), "n"], ["Retrans", r => r.retrans, "n"]], sortBy(m.net, r => r.sent + r.recv).slice(0, 15))}</div>
-   <div class="card"><h3>DNS</h3>${table([["Process", r => r.proc], ["Name", r => r.name], ["Status", r => r.status ? r.status : "ok"], ["Count", r => r.count, "n"]], m.dns.slice(0, 15))}</div>
+   <div class="card"><h3>Events ±5 s</h3>${table([["Time", e => fmtT(e.t, true), "m"], ["What", e => e.title], ["Detail", e => e.detail, "w"]], m.events)}</div>
+   <div class="card"><h3>Slowest disk I/O</h3>${table([["Max ms", r => num(r.max_ms, 1), "n"], ["Process", r => `${r.proc}(${r.pid})`], ["File", r => r.file, "w"], ["R/W", r => `${r.reads}/${r.writes}`, "n"]], sortBy(m.disk, r => r.max_ms).slice(0, 15))}</div>
+   <div class="card"><h3>Files written / deleted</h3>${table([["Process", r => r.proc], ["Path", r => r.path, "w"], ["KB", r => num(r.write_bytes / 1024), "n"], ["New/Del/Ren", r => `${r.creates}/${r.deletes}/${r.renames}`, "n"]], sortBy(m.files, r => r.write_bytes + 4096 * (r.deletes + r.renames)).slice(0, 15))}</div>
+   <div class="card"><h3>Registry writes</h3>${table([["Process", r => r.proc], ["Key", r => r.key + (r.value ? " : " + r.value : ""), "w"], ["Set/New/Del", r => `${r.sets}/${r.creates}/${r.deletes}`, "n"]], m.registry.slice(0, 15))}</div>
+   <div class="card"><h3>Network</h3>${table([["Process", r => r.proc], ["Remote", r => `${r.proto} ${r.remote}`, "w"], ["Sent KB", r => num(r.sent / 1024), "n"], ["Recv KB", r => num(r.recv / 1024), "n"], ["Retrans", r => r.retrans, "n"]], sortBy(m.net, r => r.sent + r.recv).slice(0, 15))}</div>
+   <div class="card"><h3>DNS</h3>${table([["Process", r => r.proc], ["Name", r => r.name, "w"], ["Status", r => r.status ? r.status : "ok"], ["Count", r => r.count, "n"]], m.dns.slice(0, 15))}</div>
    <div class="card"><h3>Disks · CPU · thermal</h3>${table([["Disk", r => r.disk], ["ms", r => num(r.ms, 1), "n"], ["Queue", r => num(r.queue, 1), "n"], ["MB/s", r => num(r.bps / 1048576, 1), "n"], ["Idle %", r => num(r.idle_pct), "n"]], pdh.disks || [])}
      ${pdh.cpu ? `<div class="note">CPU utility ${num(pdh.cpu.utility)}%, performance ${num(pdh.cpu.perf)}% of base, DPC ${num(pdh.cpu.dpc_pct, 1)}%, interrupts ${num(pdh.cpu.intr_pct, 1)}%${(pdh.thermal || []).map(z => `; ${esc(z.zone)} ${num(z.celsius)} °C (limit ${num(z.passive_pct)}%)`).join("")}</div>` : ""}</div>
   </div>`;
@@ -473,7 +569,12 @@ async function loadSource(body) {
   view = { from: Math.max(INFO.from, INFO.at - w * .8), to: Math.min(INFO.to, INFO.at + w * .2) };
   if (view.to - view.from < 10e3) view = { from: INFO.from, to: INFO.to };
   playhead = INFO.at;
-  layout(); renderSuspects(); selectTab("moment");
+  // The reader's layout from earlier in this viewer session.
+  chartH = Number(pref.get("chartH")) || null;
+  compact = pref.get("compact") === "1";
+  $("compact").classList.toggle("on", compact); $("compact").textContent = compact ? "Full chart" : "Compact chart";
+  setSuspects(pref.get("suspects") !== "0");
+  renderSuspects(); selectTab("moment");
 })();
 </script>
 </body>
