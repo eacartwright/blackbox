@@ -103,6 +103,10 @@ enum Cmd {
         /// An incident id (folder name under incidents\).
         #[arg(long)]
         incident: Option<String>,
+        /// The newest incident from the last 24 hours, or else the last
+        /// 30 minutes (used by the tray's "Send to technician").
+        #[arg(long)]
+        latest: bool,
         /// Centre time, e.g. "16:30" (with --minutes / --after).
         #[arg(long, allow_hyphen_values = true)]
         around: Option<String>,
@@ -126,15 +130,18 @@ enum Cmd {
         recipients: Vec<String>,
     },
     /// Create a technician key pair for encrypted bundles.
+    /// Saved in %APPDATA%\BlackBox, where `view` and `decrypt` find it.
     Keygen {
-        #[arg(short, long, default_value = "blackbox-tech.key")]
-        out: std::path::PathBuf,
+        /// Save the key somewhere else instead.
+        #[arg(short, long)]
+        out: Option<std::path::PathBuf>,
     },
     /// Decrypt a bundle made with --recipient / export_recipients.
     Decrypt {
         file: std::path::PathBuf,
+        /// Technician key (default: the one `bbx keygen` saved).
         #[arg(short, long)]
-        identity: std::path::PathBuf,
+        identity: Option<std::path::PathBuf>,
         #[arg(short, long)]
         out: Option<std::path::PathBuf>,
     },
@@ -159,6 +166,10 @@ enum Cmd {
         /// Claude model for analysis.
         #[arg(long, default_value = ai::DEFAULT_MODEL)]
         model: String,
+        /// Quit after this many seconds with the page closed (the tray's
+        /// "View recordings" runs it hidden). 0 = keep running.
+        #[arg(long, default_value_t = 0)]
+        idle_exit: u64,
     },
     /// Print the rule-based suspects for a bundle.
     Suspects {
@@ -235,6 +246,26 @@ enum BlackboxCmd {
     Stop,
 }
 
+/// The Windows "Open" dialog, for a bundle from a client.
+fn pick_bundle() -> Option<std::path::PathBuf> {
+    use windows_sys::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW};
+    let filter: Vec<u16> = "BlackBox bundles (*.zip.age, *.zip)\0*.age;*.zip\0All files\0*.*\0\0".encode_utf16().collect();
+    let title: Vec<u16> = "Open a BlackBox bundle\0".encode_utf16().collect();
+    let mut buf = vec![0u16; 4096];
+    let mut ofn: OPENFILENAMEW = unsafe { std::mem::zeroed() };
+    ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
+    ofn.lpstrFilter = filter.as_ptr();
+    ofn.lpstrFile = buf.as_mut_ptr();
+    ofn.nMaxFile = buf.len() as u32;
+    ofn.lpstrTitle = title.as_ptr();
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if unsafe { GetOpenFileNameW(&mut ofn) } == 0 {
+        return None;
+    }
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(0);
+    Some(String::from_utf16_lossy(&buf[..len]).into())
+}
+
 fn load(src: &Source) -> Result<dataset::Dataset> {
     use bbx_core::time::{now_ft, parse_user_time, FT_PER_SEC};
     if src.local {
@@ -244,7 +275,9 @@ fn load(src: &Source) -> Result<dataset::Dataset> {
         let to = (at + src.after as i64 * 60 * FT_PER_SEC).min(now_ft());
         return dataset::Dataset::open_local(&paths, from, to, at);
     }
-    let b = src.bundle.as_ref().ok_or_else(|| anyhow::anyhow!("give a bundle path, or --local"))?;
+    // No bundle given (the Start menu "BlackBox Viewer"): ask for one.
+    let picked = if src.bundle.is_none() { pick_bundle() } else { None };
+    let b = src.bundle.as_ref().or(picked.as_ref()).ok_or_else(|| anyhow::anyhow!("no bundle chosen: give a bundle path, or --local"))?;
     let ds = dataset::Dataset::open_bundle(b, src.identity.as_deref())?;
     eprintln!("Loaded {} records from {}", ds.records.len(), b.display());
     Ok(ds)
@@ -268,21 +301,36 @@ fn main() {
         Cmd::LastShutdown => cli::last_shutdown(),
         Cmd::Dump { from, to, types, last, json } => cli::dump(from, to, types, last, json),
         Cmd::Mark { note } => cli::mark(&note.join(" ")),
-        Cmd::Export { incident, around, from, to, minutes, after, out, no_etl, recipients } => {
-            cli::export(incident, around, from, to, minutes, after, out, !no_etl, recipients)
+        Cmd::Export { incident, latest, around, from, to, minutes, after, out, no_etl, recipients } => {
+            cli::export(incident, latest, around, from, to, minutes, after, out, !no_etl, recipients)
         }
-        Cmd::Keygen { out } => crypto::keygen(&out).map(|public| {
-            println!("Wrote {} (keep it private).", out.display());
-            println!("Public key, for client config.json \"export_recipients\" or --recipient:");
-            println!("  {public}");
-        }),
+        Cmd::Keygen { out } => {
+            let out = out.unwrap_or_else(crypto::default_key_path);
+            if out.exists() {
+                // Already set up: show the public key again instead of failing.
+                crypto::public_key_of(&out).map(|public| {
+                    println!("You already have a technician key: {}", out.display());
+                    println!("Its public key, for the client setup or --recipient:");
+                    println!("  {public}");
+                })
+            } else {
+                crypto::keygen(&out).map(|public| {
+                    println!("Wrote {} (keep it private, and back it up: bundles can't be opened without it).", out.display());
+                    println!("Public key, for the client setup or --recipient:");
+                    println!("  {public}");
+                })
+            }
+        }
         Cmd::Decrypt { file, identity, out } => {
+            let identity = identity.unwrap_or_else(crypto::default_key_path);
             let out = out.unwrap_or_else(|| file.with_extension(""));
             crypto::read_identities(&identity).and_then(|ids| crypto::decrypt_file(&file, &out, &ids)).map(|_| println!("Wrote {}", out.display()))
         }
         Cmd::Incidents => cli::incidents(),
-        Cmd::View { src, port, no_browser, model } => {
-            load(&src).and_then(|ds| viewer::serve(ds, viewer::ViewOptions { port, open_browser: !no_browser, model }))
+        Cmd::View { src, port, no_browser, model, idle_exit } => {
+            let local = src.local.then(bbx_core::paths::Paths::from_env);
+            let idle_exit = (idle_exit > 0).then(|| std::time::Duration::from_secs(idle_exit));
+            load(&src).and_then(|ds| viewer::serve(ds, viewer::ViewOptions { port, open_browser: !no_browser, model, local, idle_exit }))
         }
         Cmd::Suspects { src } => load(&src).map(|ds| print!("{}", suspects::to_text(&suspects::analyze(&ds)))),
         Cmd::Digest { src, out } => load(&src).and_then(|ds| {

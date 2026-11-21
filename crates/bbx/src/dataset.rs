@@ -107,7 +107,16 @@ impl Dataset {
         let temp = temp_dir()?;
         let mut ds = Dataset { source: path.display().to_string(), temp: TempGuard(Some(temp.clone())), ..Default::default() };
         let zip_path = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("age")) {
-            let key = identity.ok_or_else(|| anyhow!("{} is encrypted: pass the technician key with -i <key file>", path.display()))?;
+            let default_key = crate::crypto::default_key_path();
+            let key = match identity {
+                Some(k) => k,
+                None if default_key.exists() => default_key.as_path(),
+                None => bail!(
+                    "{} is encrypted and there is no technician key at {}: run `bbx keygen` once, or pass the key with -i <key file>",
+                    path.display(),
+                    default_key.display()
+                ),
+            };
             let ids = crate::crypto::read_identities(key)?;
             let out = temp.join("bundle.zip");
             crate::crypto::decrypt_file(path, &out, &ids)?;
@@ -197,6 +206,40 @@ impl Dataset {
         ds.finish();
         Ok(ds)
     }
+
+    /// One saved incident from this machine: its window, the incident
+    /// itself and its screenshots (run elevated).
+    pub fn open_local_incident(paths: &Paths, id: &str) -> Result<Dataset> {
+        let (from_ft, to_ft, at_ft) = crate::export::incident_window(paths, id)?;
+        let mut ds = Dataset::open_local(paths, from_ft, to_ft, at_ft)?;
+        let dir = paths.incidents().join(id);
+        ds.source = format!("incident {id}");
+        ds.incident = std::fs::read(dir.join("incident.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        if let Ok(rd) = std::fs::read_dir(dir.join("screens")) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if let Some(ft) = screen_time(&name, at_ft) {
+                    ds.screens.push((ft, e.path()));
+                }
+            }
+        }
+        ds.screens.sort_by_key(|s| s.0);
+        Ok(ds)
+    }
+}
+
+/// Saved incidents on this machine, newest first (run elevated).
+pub fn list_incidents(paths: &Paths) -> Vec<rec::Incident> {
+    let mut list: Vec<rec::Incident> = std::fs::read_dir(paths.incidents())
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| std::fs::read(e.path().join("incident.json")).ok())
+                .filter_map(|b| serde_json::from_slice(&b).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    list.sort_by_key(|i: &rec::Incident| std::cmp::Reverse(i.at_ft));
+    list
 }
 
 pub fn load_journal(paths: &Paths, from_ft: i64, to_ft: i64) -> Result<Vec<Rec>> {

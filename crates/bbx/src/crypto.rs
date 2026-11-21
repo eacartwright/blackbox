@@ -7,13 +7,28 @@
 use anyhow::{anyhow, bail, Context, Result};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
+/// Where `bbx keygen` saves the technician key and where the viewer looks
+/// for it when none is given: %APPDATA%\BlackBox\blackbox-tech.key.
+pub fn default_key_path() -> PathBuf {
+    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    base.join("BlackBox").join("blackbox-tech.key")
+}
+
+/// The public key (`age1...`) of an existing key file.
+pub fn public_key_of(path: &Path) -> Result<String> {
+    Ok(read_identities(path)?[0].to_public().to_string())
+}
 
 pub fn keygen(out: &Path) -> Result<String> {
     use age::secrecy::ExposeSecret;
     if out.exists() {
         bail!("{} already exists; refusing to overwrite a key", out.display());
+    }
+    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     }
     let id = age::x25519::Identity::generate();
     let public = id.to_public().to_string();

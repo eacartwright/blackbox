@@ -39,6 +39,10 @@ const CMD_MARK: usize = 100;
 const CMD_ABOUT: usize = 101;
 const CMD_TOGGLE: usize = 102;
 const CMD_EXIT: usize = 103;
+const CMD_VIEW: usize = 104;
+const CMD_SEND: usize = 105;
+/// Posted by the "Send to technician" worker thread when the export ends.
+const WM_EXPORT_DONE: u32 = WM_APP + 2;
 const ERROR_ALREADY_EXISTS: u32 = 183;
 const DEVICE_NOTIFY_WINDOW_HANDLE: u32 = 0;
 const PBT_APMSUSPEND: usize = 0x4;
@@ -249,6 +253,11 @@ fn show_menu(hwnd: HWND) {
         let menu = CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, CMD_MARK, wide("Capture Incident\tCtrl+Alt+Shift+B").as_ptr());
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+        // Both read the recordings, which only administrators can (UAC prompt).
+        AppendMenuW(menu, MF_STRING, CMD_VIEW, wide("View recordings…").as_ptr());
+        let busy = if EXPORTING.load(std::sync::atomic::Ordering::SeqCst) { MF_GRAYED } else { 0 };
+        AppendMenuW(menu, MF_STRING | busy, CMD_SEND, wide("Send to technician…").as_ptr());
+        AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         // Stopping or starting the service needs an administrator (UAC prompt).
         let toggle = match service::running() {
             Some(true) => Some("Stop recording…"),
@@ -275,6 +284,13 @@ fn show_menu(hwnd: HWND) {
                 }
             }
             CMD_EXIT => exit(hwnd),
+            CMD_VIEW => {
+                // Runs hidden; it quits 10 minutes after the browser page closes.
+                if !service::run_elevated(hwnd, "view --local --idle-exit 600") {
+                    balloon(hwnd, "BlackBox", "Not opened: administrator approval is needed to view the recordings.");
+                }
+            }
+            CMD_SEND => send_to_technician(hwnd),
             CMD_ABOUT => {
                 MessageBoxW(
                     hwnd,
@@ -311,6 +327,78 @@ fn exit(hwnd: HWND) {
         }
     }
     unsafe { DestroyWindow(hwnd) };
+}
+
+static EXPORTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static EXPORT_RESULT: std::sync::Mutex<Option<Result<std::path::PathBuf, String>>> = std::sync::Mutex::new(None);
+
+/// This user's Desktop (follows OneDrive / folder redirection).
+fn desktop_dir() -> std::path::PathBuf {
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_Desktop, SHGetKnownFolderPath};
+    unsafe {
+        let mut p: windows_sys::core::PWSTR = std::ptr::null_mut();
+        if SHGetKnownFolderPath(&FOLDERID_Desktop, 0, std::ptr::null_mut(), &mut p) == 0 && !p.is_null() {
+            let len = (0..).take_while(|&i| *p.add(i) != 0).count();
+            let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
+            CoTaskMemFree(p as _);
+            return s.into();
+        }
+    }
+    std::path::PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default()).join("Desktop")
+}
+
+fn local_stamp() -> String {
+    let t = unsafe {
+        let mut t = std::mem::zeroed();
+        windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut t);
+        t
+    };
+    format!("{:04}{:02}{:02}-{:02}{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute)
+}
+
+/// Tray "Send to technician": export the newest incident (or the last 30
+/// minutes) to the Desktop, encrypted for the technician when a key is set,
+/// then show it in Explorer. The export runs elevated on a worker thread.
+fn send_to_technician(hwnd: HWND) {
+    let ok = unsafe {
+        MessageBoxW(
+            hwnd,
+            wide("Save what BlackBox recorded so your IT support can look at it?\n\nThis saves the most recent incident (or, if there isn't one from today, the last 30 minutes) as a file on your Desktop. Send that file to your IT support by email or file sharing.\n\nIt can take a minute and the file may be large.").as_ptr(),
+            wide("Send to technician").as_ptr(),
+            MB_YESNO | MB_ICONQUESTION,
+        )
+    };
+    if ok != IDYES || EXPORTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let computer = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "PC".into());
+    let base = desktop_dir().join(format!("BlackBox-{computer}-{}.zip", local_stamp()));
+    balloon(hwnd, "BlackBox: saving", "Saving the recording to your Desktop. This can take a minute.");
+    let hwnd_v = hwnd as isize;
+    std::thread::spawn(move || {
+        let hwnd = hwnd_v as HWND;
+        let args = format!("export --latest --out \"{}\"", base.display());
+        let res = service::run_elevated_wait(hwnd, &args, 15 * 60_000).and_then(|_| {
+            let enc = std::path::PathBuf::from(format!("{}.age", base.display()));
+            [enc, base.clone()].into_iter().find(|p| p.exists()).ok_or_else(|| "the file was not created".to_string())
+        });
+        *EXPORT_RESULT.lock().unwrap() = Some(res);
+        unsafe { PostMessageW(hwnd, WM_EXPORT_DONE, 0, 0) };
+    });
+}
+
+fn export_done(hwnd: HWND) {
+    EXPORTING.store(false, std::sync::atomic::Ordering::SeqCst);
+    match EXPORT_RESULT.lock().unwrap().take() {
+        Some(Ok(path)) => {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            balloon(hwnd, "BlackBox: saved to your Desktop", &format!("{name}\nSend this file to your IT support."));
+            std::process::Command::new("explorer.exe").arg(format!("/select,{}", path.display())).spawn().ok();
+        }
+        Some(Err(why)) => balloon(hwnd, "BlackBox: not saved", &format!("The recording was not saved: {why}.")),
+        None => {}
+    }
 }
 
 fn mark() {
@@ -388,6 +476,7 @@ fn on_tick() {
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_TIMER if wp == TIMER_ID => on_tick(),
+        WM_EXPORT_DONE => export_done(hwnd),
         WM_HOTKEY if wp as i32 == HOTKEY_ID => mark(),
         WM_TRAY => match lp as u32 {
             WM_RBUTTONUP | WM_CONTEXTMENU | WM_LBUTTONDBLCLK => show_menu(hwnd),

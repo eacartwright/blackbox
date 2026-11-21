@@ -34,6 +34,7 @@ SetupIconFile=..\assets\blackbox.ico
 UninstallDisplayName=BlackBox
 UninstallDisplayIcon={app}\bbx.exe
 ChangesEnvironment=yes
+ChangesAssociations=yes
 ; The service and tray agent are stopped in PrepareToInstall instead.
 CloseApplications=no
 
@@ -47,6 +48,7 @@ Name: "recorder"; Description: "Recording service and tray icon";  Types: record
 
 [Tasks]
 Name: "evidence"; Description: "Configure Windows to keep more evidence (larger event logs, crash dumps, Right Ctrl + Scroll Lock crash for total freezes)"; Components: recorder
+Name: "assoc"; Description: "Open encrypted BlackBox bundles (.zip.age) by double-clicking them"; Components: tools and not recorder
 
 [Files]
 Source: "{#BinDir}\bbx.exe";       DestDir: "{app}"; Flags: ignoreversion
@@ -56,11 +58,20 @@ Source: "{#BinDir}\bbx-agent.exe"; DestDir: "{app}"; Flags: ignoreversion; Compo
 ; Put bbx on the system PATH so it works from any prompt.
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; \
   ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Check: NeedsAddPath(ExpandConstant('{app}'))
+; Double-click a .zip.age bundle to open it in the viewer (technician PCs).
+Root: HKA; Subkey: "Software\Classes\.age"; ValueType: string; ValueName: ""; ValueData: "BlackBox.Bundle"; Flags: uninsdeletevalue; Tasks: assoc
+Root: HKA; Subkey: "Software\Classes\.age\OpenWithProgids"; ValueType: string; ValueName: "BlackBox.Bundle"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc
+Root: HKA; Subkey: "Software\Classes\BlackBox.Bundle"; ValueType: string; ValueName: ""; ValueData: "BlackBox bundle"; Flags: uninsdeletekey; Tasks: assoc
+Root: HKA; Subkey: "Software\Classes\BlackBox.Bundle\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\bbx.exe,0"; Tasks: assoc
+Root: HKA; Subkey: "Software\Classes\BlackBox.Bundle\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bbx.exe"" view ""%1"" --idle-exit 600"; Tasks: assoc
 
 [Icons]
 ; Starts recording again (UAC prompt if it was stopped) and shows the tray icon.
 Name: "{autoprograms}\BlackBox"; Filename: "{app}\bbx-agent.exe"; Parameters: "--start"; \
   Comment: "Start recording and show the BlackBox tray icon"; Components: recorder
+; Asks for a bundle from a client and opens it in the viewer.
+Name: "{autoprograms}\BlackBox Viewer"; Filename: "{app}\bbx.exe"; Parameters: "view --idle-exit 600"; \
+  Comment: "Open a BlackBox bundle from a client"; Components: tools
 
 [UninstallDelete]
 Type: files; Name: "{app}\install.log"

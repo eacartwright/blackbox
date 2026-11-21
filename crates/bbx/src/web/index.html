@@ -24,7 +24,8 @@ header { display: flex; align-items: center; gap: 14px; padding: 8px 14px; backg
 .badge { padding: 2px 8px; border-radius: 10px; font-weight: 600; font-size: 12px; background: var(--soft); }
 .badge.bad { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
 .controls { margin-left: auto; display: flex; gap: 6px; align-items: center; }
-button, select, input[type=text], input[type=number] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
+#src { max-width: 420px; }
+button, select, input[type=text], input[type=number], input[type=datetime-local] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
 button { cursor: pointer; } button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 #clock { font-family: var(--mono); min-width: 190px; text-align: right; }
@@ -78,6 +79,10 @@ pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; margin: 
   <div class="brand">BlackBox</div>
   <div id="meta">Loading…</div>
   <div id="verdict" class="badge" hidden></div>
+  <span id="pick" hidden>
+    <select id="src" title="Which recordings to show"></select>
+    <span id="custom" hidden><input type="datetime-local" id="cfrom" aria-label="From"> → <input type="datetime-local" id="cto" aria-label="To"> <button id="cload">Show</button></span>
+  </span>
   <div class="controls">
     <button id="play" title="Play from the playhead">▶ Play</button>
     <select id="speed" title="Playback speed"><option value="1">1×</option><option value="10" selected>10×</option><option value="60">60×</option><option value="300">300×</option></select>
@@ -409,8 +414,51 @@ async function renderTab() {
   } catch (e) { p.innerHTML = `<div class="note">${esc(e.message)}</div>`; }
 }
 
+// ------------------------------------------------------------ picker
+// Viewing this PC's own recordings: switch to another incident or range.
+async function initPicker() {
+  let S;
+  try { S = await api("/api/sources"); } catch { return; }
+  if (!S.local) return;
+  const sel = $("src"), opt = (v, t) => `<option value="${esc(v)}">${esc(t)}</option>`;
+  const toLocal = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
+  const cur = S.current.incident ? "i:" + S.current.incident : "";
+  let h = `<option value="" disabled>Showing ${esc(fmtD(S.current.from))} → ${esc(fmtT(S.current.to))}</option>`;
+  h += `<optgroup label="Recent">${opt("r:30", "Last 30 minutes")}${opt("r:120", "Last 2 hours")}${opt("r:1440", "Last 24 hours")}${opt("custom", "Pick a time range…")}</optgroup>`;
+  if (S.incidents.length) h += `<optgroup label="Incidents">${S.incidents.map(i => opt("i:" + i.id, `${fmtD(i.t)} · ${i.kind}: ${i.reason}`.slice(0, 120))).join("")}</optgroup>`;
+  else h += `<optgroup label="Incidents">${'<option disabled>None saved yet</option>'}</optgroup>`;
+  sel.innerHTML = h;
+  sel.value = cur;
+  $("pick").hidden = false;
+  sel.onchange = () => {
+    const v = sel.value;
+    $("custom").hidden = v !== "custom";
+    if (v.startsWith("r:")) { const to = Date.now(); loadSource({ from: to - Number(v.slice(2)) * 60e3, to }); }
+    else if (v.startsWith("i:")) loadSource({ incident: v.slice(2) });
+    else if (v === "custom") { $("cfrom").value = toLocal(S.current.from); $("cto").value = toLocal(S.current.to); }
+  };
+  $("cload").onclick = () => {
+    const f = new Date($("cfrom").value).getTime(), t = new Date($("cto").value).getTime();
+    if (!(f < t)) { $("meta").textContent = "Pick a start time before the end time."; return; }
+    if (t - f > S.max_hours * 3600e3) { $("meta").textContent = `Pick at most ${S.max_hours} hours.`; return; }
+    loadSource({ from: f, to: t });
+  };
+}
+async function loadSource(body) {
+  $("meta").textContent = "Loading…";
+  $("src").disabled = true;
+  try {
+    const r = await api("/api/load", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (r.error) throw new Error(r.error);
+    location.reload();
+  } catch (e) { $("meta").textContent = "Could not load that: " + e.message; $("src").disabled = false; }
+}
+
 // ------------------------------------------------------------ boot
 (async () => {
+  initPicker();
+  // Keep a viewer started with --idle-exit alive while this page is open.
+  setInterval(() => api("/api/ping").catch(() => {}), 60e3);
   try {
     [INFO, SERIES, EVENTS, SUSPECTS] = await Promise.all([api("/api/info"), api("/api/series"), api("/api/events"), api("/api/suspects")]);
   } catch (e) { $("meta").textContent = "Cannot load data: " + e.message; return; }

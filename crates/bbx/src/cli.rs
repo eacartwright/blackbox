@@ -285,12 +285,13 @@ pub fn around(time: &str, minutes: u64, after: u64) -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 pub fn export(
-    incident: Option<String>,
-    around: Option<String>,
+    mut incident: Option<String>,
+    latest: bool,
+    mut around: Option<String>,
     from: Option<String>,
     to: Option<String>,
-    minutes: u64,
-    after: u64,
+    mut minutes: u64,
+    mut after: u64,
     out: Option<std::path::PathBuf>,
     include_etl: bool,
     recipients: Vec<String>,
@@ -298,6 +299,15 @@ pub fn export(
     let paths = paths_readable()?;
     let cfg = bbx_core::config::Config::load(&paths.config());
     let recipients = crate::crypto::parse_recipients(if recipients.is_empty() { &cfg.export_recipients } else { &recipients })?;
+    if latest {
+        let day_ago = now_ft() - 24 * 3600 * FT_PER_SEC;
+        match crate::dataset::list_incidents(&paths).into_iter().find(|i| i.at_ft > day_ago) {
+            Some(i) => incident = Some(i.id),
+            None => {
+                (around, minutes, after) = (Some("-0m".into()), 30, 0);
+            }
+        }
+    }
     let (from_ft, to_ft, at_ft) = if let Some(id) = &incident {
         crate::export::incident_window(&paths, id)?
     } else if let Some(a) = around {
@@ -329,12 +339,8 @@ pub fn export(
 
 pub fn incidents() -> Result<()> {
     let paths = paths_readable()?;
-    let mut list: Vec<rec::Incident> = std::fs::read_dir(paths.incidents())?
-        .flatten()
-        .filter_map(|e| std::fs::read(e.path().join("incident.json")).ok())
-        .filter_map(|b| serde_json::from_slice(&b).ok())
-        .collect();
-    list.sort_by_key(|i| i.at_ft);
+    let mut list = crate::dataset::list_incidents(&paths);
+    list.reverse(); // oldest first, newest at the bottom of the terminal
     if list.is_empty() {
         println!("No incidents saved.");
     }

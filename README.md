@@ -103,11 +103,28 @@ starts the tray agent at every sign-in, stores data under
 
 Pass `--no-system-changes` to skip that last part.
 
-On the technician's machine, open a bundle a client sent you:
+### Getting the evidence
 
-```bash
-bbx view blackbox-PC01-20261119-163000.zip.age -i blackbox-tech.key
-```
+**On the client PC**, from the tray icon (each asks for administrator approval,
+because the recordings are readable only by administrators):
+
+- **View recordings…** opens the viewer in the browser. The picker at the top
+  switches between the last 30 minutes / 2 hours / 24 hours, any saved incident,
+  or a custom range of up to 48 hours. The hidden viewer quits 10 minutes after
+  the page is closed.
+- **Send to technician…** saves the newest incident from the last 24 hours (or
+  else the last 30 minutes) to the user's Desktop as `BlackBox-<PC>-<time>.zip.age`,
+  encrypted for the technician key set during setup, and shows it in Explorer.
+  The user emails it or shares it from there. With black-box files included it's
+  typically tens of MB.
+
+**On the technician's PC** (setup type **Technician tools only**):
+
+1. Run `bbx keygen` once. The key is saved in `%APPDATA%\BlackBox\blackbox-tech.key`
+   (back it up: bundles can't be opened without it), and it prints the public
+   key to paste into each client's setup. Running it again shows the same public key.
+2. Double-click a `.zip.age` bundle, or use **BlackBox Viewer** in the Start menu
+   to pick one. The key is found automatically; `-i <key>` still works.
 
 That opens the viewer in your browser. It has the timeline with playback, ranked suspects, black-box drill-down and screenshots. Its **Claude analysis** tab explains what happened if `ANTHROPIC_API_KEY` is set. The same analysis from the command line:
 
@@ -115,7 +132,7 @@ That opens the viewer in your browser. It has the timeline with playback, ranked
 bbx analyze bundle.zip --question "why did the screen go black?"
 ```
 
-On the client machine itself, without exporting:
+From an elevated prompt on the client, the same viewer without exporting:
 
 ```bash
 bbx view --local --around 16:30
@@ -141,21 +158,21 @@ Other commands:
 | `bbx dump --from 16:20 --to 16:35 -t EventLog,Device` | Raw records (`--json` for JSON lines) |
 | `bbx mark "screen went black"` | Users can run this right after it happens; opens an incident with the note |
 | `bbx incidents` | List saved incidents (manual marks and automatic detections) |
-| `bbx export --incident <id>` | One .zip with records, report, event logs, black-box files and dumps (`--around 16:30`, `--from/--to`, `--no-etl`) |
+| `bbx export --incident <id>` | One .zip with records, report, event logs, black-box files and dumps (`--latest`, `--around 16:30`, `--from/--to`, `--no-etl`, `-o <file>`) |
 | `bbx diag live` | Elevated: run the live ETW decoder for 15 s and show what it captured |
-| `bbx view <bundle> [-i key]` | Viewer: charts, event lanes, playback, suspects, moment details, black-box rows, screenshots, Claude analysis (`--local --around 16:30` reads this machine) |
+| `bbx view [bundle] [-i key]` | Viewer: charts, event lanes, playback, suspects, moment details, black-box rows, screenshots, Claude analysis. No bundle: asks for one. `--local --around 16:30` reads this machine (with the incident and range picker); `--idle-exit <secs>` quits once the page is closed |
 | `bbx suspects <bundle>` | Rule-based ranked causes with evidence |
 | `bbx digest <bundle> [-o file]` | The text that `analyze` would send, to review first |
 | `bbx analyze <bundle> [-q question]` | Ask Claude (`claude-opus-5-5`) what happened; needs `ANTHROPIC_API_KEY` |
-| `bbx keygen` | Create a technician key; put its `age1...` public key in client `config.json` as `export_recipients` |
-| `bbx decrypt <bundle.age> -i blackbox-tech.key` | Open an encrypted bundle |
+| `bbx keygen` | Create the technician key in `%APPDATA%\BlackBox` (or show its public key if it exists); the `age1...` public key goes in the client setup or `config.json` `export_recipients` |
+| `bbx decrypt <bundle.age> [-i key]` | Decrypt a bundle to a plain .zip |
 | `bbx blackbox status` | ETW session state and files |
 | `bbx run --for-secs 60` | Record in the foreground (testing; no black box unless elevated) |
 | `bbx stop` / `bbx start` | Stop recording (service and both ETW sessions) / start again; elevated. Also in the tray menu, behind a UAC prompt. Tray **Exit…** stops recording and closes the tray icon; both return at the next restart, or from **BlackBox** in the Start menu |
 | `bbx uninstall [--purge]` | Remove the service and black box (and optionally all data) |
 
 Users can also press **Ctrl+Alt+Shift+B**, or right-click the tray icon >
-**It just happened**, the moment something goes wrong.
+**Capture Incident**, the moment something goes wrong.
 
 Optional settings in `C:\ProgramData\BlackBox\config.json` (restart the service after changing):
 

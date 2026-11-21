@@ -27,7 +27,27 @@ pub struct ViewOptions {
     pub port: u16,
     pub open_browser: bool,
     pub model: String,
+    /// Viewing this machine's own recordings: lets the page pick another
+    /// incident or time range.
+    pub local: Option<bbx_core::paths::Paths>,
+    /// Quit when no page has talked to us for this long (the open page
+    /// pings every minute).
+    pub idle_exit: Option<std::time::Duration>,
 }
+
+/// The running viewer. The loaded dataset can be swapped (local mode).
+struct Srv {
+    token: String,
+    port: u16,
+    model: String,
+    local: Option<bbx_core::paths::Paths>,
+    cur: std::sync::RwLock<Arc<State>>,
+    loading: Mutex<()>,
+    last_request: Mutex<std::time::Instant>,
+}
+
+/// Longest window the picker will load (records are held in memory).
+const MAX_LOAD_HOURS: i64 = 48;
 
 #[derive(Default, serde::Serialize, Clone)]
 struct AiJob {
@@ -40,8 +60,6 @@ struct AiJob {
 
 struct State {
     ds: Dataset,
-    token: String,
-    port: u16,
     model: String,
     suspects: Vec<Suspect>,
     names: HashMap<u32, String>,
@@ -73,33 +91,97 @@ fn token() -> String {
 pub fn serve(ds: Dataset, opts: ViewOptions) -> Result<()> {
     let server = Server::http(("127.0.0.1", opts.port)).map_err(|e| anyhow!("cannot listen on 127.0.0.1:{}: {e}", opts.port))?;
     let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(opts.port);
+    let token = token();
+    let st = build_state(ds, &opts.model);
+    let url = format!("http://127.0.0.1:{port}/?k={token}");
+    println!("BlackBox viewer for {}", st.ds.source);
+    println!("  {url}");
+    println!("Press Ctrl+C to stop.");
+    let srv = Arc::new(Srv {
+        token,
+        port,
+        model: opts.model,
+        local: opts.local,
+        cur: std::sync::RwLock::new(Arc::new(st)),
+        loading: Mutex::new(()),
+        last_request: Mutex::new(std::time::Instant::now()),
+    });
+    if opts.open_browser {
+        std::process::Command::new("explorer.exe").arg(&url).spawn().ok();
+    }
+    if let Some(limit) = opts.idle_exit {
+        let srv = srv.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(15));
+            if srv.last_request.lock().unwrap().elapsed() > limit {
+                println!("No viewer page open; exiting.");
+                std::process::exit(0);
+            }
+        });
+    }
+    for req in server.incoming_requests() {
+        let srv = srv.clone();
+        std::thread::spawn(move || handle(srv, req));
+    }
+    Ok(())
+}
+
+fn build_state(ds: Dataset, model: &str) -> State {
     let suspects = suspects::analyze(&ds);
     let names = process_names(&ds);
     let etl_index = index_etl(&ds.etl_files);
-    let st = Arc::new(State {
+    State {
         series: series(&ds),
         events: events(&ds, &names),
-        token: token(),
-        port,
-        model: opts.model,
+        model: model.to_string(),
         suspects,
         names,
         digest: Mutex::new(None),
         ai: Mutex::new(AiJob { status: "idle".into(), ..Default::default() }),
         etl_index,
         ds,
-    });
-    let url = format!("http://127.0.0.1:{port}/?k={}", st.token);
-    println!("BlackBox viewer for {}", st.ds.source);
-    println!("  {url}");
-    println!("Press Ctrl+C to stop.");
-    if opts.open_browser {
-        std::process::Command::new("explorer.exe").arg(&url).spawn().ok();
     }
-    for req in server.incoming_requests() {
-        let st = st.clone();
-        std::thread::spawn(move || handle(st, req));
-    }
+}
+
+/// What the picker can offer: this machine's incidents (local mode only).
+fn sources(srv: &Srv, st: &State) -> Value {
+    let Some(paths) = &srv.local else { return json!({"local": false}) };
+    let incidents: Vec<Value> = crate::dataset::list_incidents(paths)
+        .into_iter()
+        .filter(|i| i.at_ft != 0)
+        .map(|i| json!({"id": i.id, "kind": i.kind, "reason": i.reason, "t": ft_ms(i.at_ft)}))
+        .collect();
+    json!({
+        "local": true,
+        "incidents": incidents,
+        "current": {"incident": st.ds.incident.as_ref().map(|i| i.id.clone()), "from": ft_ms(st.ds.from_ft), "to": ft_ms(st.ds.to_ft)},
+        "max_hours": MAX_LOAD_HOURS,
+    })
+}
+
+/// Load another incident or time range of this machine's recordings.
+fn load_view(srv: &Srv, req: &Value) -> Result<()> {
+    let paths = srv.local.as_ref().ok_or_else(|| anyhow!("this viewer shows a bundle; nothing else to load"))?;
+    let _one_at_a_time = srv.loading.lock().unwrap();
+    let ds = if let Some(id) = req.get("incident").and_then(|v| v.as_str()) {
+        // Only names from the incident list: no path separators.
+        if id.is_empty() || id.contains(['/', '\\']) || id.contains("..") {
+            return Err(anyhow!("bad incident id"));
+        }
+        Dataset::open_local_incident(paths, id)?
+    } else {
+        let ms = |k: &str| req.get(k).and_then(|v| v.as_f64()).ok_or_else(|| anyhow!("missing '{k}'"));
+        let (from, to) = (ms_ft(ms("from")?), ms_ft(ms("to")?).min(bbx_core::time::now_ft()));
+        if to <= from {
+            return Err(anyhow!("the end must be after the start"));
+        }
+        if to - from > MAX_LOAD_HOURS * 3600 * 10_000_000 {
+            return Err(anyhow!("pick at most {MAX_LOAD_HOURS} hours"));
+        }
+        Dataset::open_local(paths, from, to, to)?
+    };
+    let st = build_state(ds, &srv.model);
+    *srv.cur.write().unwrap() = Arc::new(st);
     Ok(())
 }
 
@@ -175,7 +257,7 @@ fn interesting(e: &rec::EventLog) -> bool {
     )
 }
 
-fn handle(st: Arc<State>, mut req: Request) {
+fn handle(srv: Arc<Srv>, mut req: Request) {
     // Loopback Host only (DNS rebinding), and the per-run token.
     let host_ok = req
         .headers()
@@ -183,18 +265,31 @@ fn handle(st: Arc<State>, mut req: Request) {
         .find(|h| h.field.equiv("Host"))
         .map(|h| {
             let v = h.value.as_str();
-            v == format!("127.0.0.1:{}", st.port) || v == format!("localhost:{}", st.port)
+            v == format!("127.0.0.1:{}", srv.port) || v == format!("localhost:{}", srv.port)
         })
         .unwrap_or(false);
     let url = req.url().to_string();
     let q = query(&url);
-    if !host_ok || q.get("k") != Some(&st.token) {
+    if !host_ok || q.get("k") != Some(&srv.token) {
         return respond(req, 403, "text/plain", b"forbidden".to_vec());
     }
     let path = url.split('?').next().unwrap_or("/").to_string();
     let method = req.method().clone();
+    *srv.last_request.lock().unwrap() = std::time::Instant::now();
+    let st = srv.cur.read().unwrap().clone();
     match (method, path.as_str()) {
         (Method::Get, "/") => respond(req, 200, "text/html; charset=utf-8", INDEX_HTML.as_bytes().to_vec()),
+        (Method::Get, "/api/ping") => json_resp(req, &json!({"ok": true})),
+        (Method::Get, "/api/sources") => json_resp(req, &sources(&srv, &st)),
+        (Method::Post, "/api/load") => {
+            let mut body = String::new();
+            let _ = req.as_reader().take(4 * 1024).read_to_string(&mut body);
+            let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            match load_view(&srv, &v) {
+                Ok(()) => json_resp(req, &json!({"ok": true})),
+                Err(e) => json_resp(req, &json!({"error": format!("{e:#}")})),
+            }
+        }
         (Method::Get, "/api/info") => json_resp(req, &info(&st)),
         (Method::Get, "/api/series") => json_resp(req, &st.series),
         (Method::Get, "/api/events") => json_resp(req, &st.events),

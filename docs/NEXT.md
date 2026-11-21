@@ -27,7 +27,18 @@ list for the next session.
   tab. Check that file and registry paths resolve and that registry value
   names look right; the kernel event layouts were inferred, not observed.
 
+- [ ] **Tray "View recordings…" and "Send to technician…" by hand.** The
+  commands they run (`view --local --idle-exit 600`, `export --latest --out`)
+  were tested; the clicks, UAC prompt, Desktop file and Explorer selection were
+  not.
+- [ ] **Technician install type on a real technician PC:** double-clicking a
+  `.zip.age` and the BlackBox Viewer file picker.
+
 ## 2. Known issues and rough edges
+
+- **Send to technician needs an administrator.** A standard user can't approve
+  the UAC prompt. If that matters, the service could do the export instead
+  (it runs as SYSTEM) when the tray asks for one through `triggers\`.
 
 - **First-run backfill can open incidents.** Event-log entries up to 5
   minutes old trigger detectors (`detect::match_event`). On a first install
@@ -91,6 +102,8 @@ All user-facing text of the tray agent is in `crates/bbx-agent/src/main.rs`:
 | "Recording stopped / started" notifications | `on_tick()`: the `balloon(...)` after the service-state check |
 | "About BlackBox" dialog | `show_menu()`: the `MessageBoxW(...)` text and title |
 | "Exit…" confirmation and "still running" notification | `exit()` |
+| "Send to technician…" confirmation and saved / not saved notifications | `send_to_technician()`, `export_done()` |
+| "View recordings…" refusal notification | `show_menu()`: `CMD_VIEW` |
 | Notification after "It just happened" | `mark()`: `balloon(a.hwnd, "<title>", "<text>")` (title max 63, text max 255 characters) |
 | The hotkey (Ctrl+Alt+Shift+B) | `main()`: `RegisterHotKey(...)`; update the tooltip and menu text to match |
 
