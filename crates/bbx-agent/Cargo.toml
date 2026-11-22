@@ -23,4 +23,4 @@ winresource.workspace = true
 # Shown in Task Manager, Startup apps and the file's Properties > Details.
 [package.metadata.winresource]
 ProductName = "BlackBox"
-FileDescription = "BlackBox tray icon"
+FileDescription = "BlackBox"

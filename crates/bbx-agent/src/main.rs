@@ -27,7 +27,7 @@ use windows_sys::Win32::System::RemoteDesktop::{WTSRegisterSessionNotification, 
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT};
 use windows_sys::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIIF_LARGE_ICON, NIIF_USER, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -129,13 +129,18 @@ fn main() {
     unsafe {
         let hinst = GetModuleHandleW(std::ptr::null());
         let class = wide("BlackBoxAgentWindow");
-        let wc = WNDCLASSW {
+        // The window's own icon: Windows may use it for the app in
+        // notifications (otherwise a generic "i" shows in their header).
+        let wc = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(wndproc),
             hInstance: hinst,
             lpszClassName: class.as_ptr(),
+            hIcon: balloon_icon(),
+            hIconSm: tray_icon(true),
             ..std::mem::zeroed()
         };
-        RegisterClassW(&wc);
+        RegisterClassExW(&wc);
         // A hidden top-level window (not message-only: those miss broadcast
         // messages like WM_DISPLAYCHANGE and TaskbarCreated).
         let hwnd = CreateWindowExW(0, class.as_ptr(), wide("BlackBox Agent").as_ptr(), WS_OVERLAPPED, 0, 0, 0, 0, std::ptr::null_mut(), std::ptr::null_mut(), hinst, std::ptr::null());
@@ -241,10 +246,28 @@ fn remove_tray(hwnd: HWND) {
     unsafe { Shell_NotifyIconW(NIM_DELETE, &nid) };
 }
 
+/// The BlackBox icon at notification size (the big icon in the toast).
+fn balloon_icon() -> HICON {
+    unsafe {
+        let (cx, cy) = (GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
+        LoadImageW(GetModuleHandleW(std::ptr::null()), ICON_RECORDING as usize as *const u16, IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR) as HICON
+    }
+}
+
 fn balloon(hwnd: HWND, title: &str, text: &str) {
     let mut nid = icon_data(hwnd);
-    nid.uFlags = NIF_INFO;
-    nid.dwInfoFlags = NIIF_INFO;
+    // Re-send the tray icon too: the notification header may take its
+    // small icon from it.
+    nid.uFlags = NIF_INFO | NIF_ICON;
+    nid.hIcon = tray_icon(service::running() != Some(false));
+    // Our own icon instead of Windows' generic "i".
+    let icon = balloon_icon();
+    if icon.is_null() {
+        nid.dwInfoFlags = NIIF_INFO;
+    } else {
+        nid.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
+        nid.hBalloonIcon = icon;
+    }
     copy_into(&mut nid.szInfoTitle, title);
     copy_into(&mut nid.szInfo, text);
     unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid) };
